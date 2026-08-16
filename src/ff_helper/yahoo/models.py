@@ -144,6 +144,24 @@ class DraftPick:
 
 
 @dataclass(frozen=True)
+class KeptPlayer:
+    """A player already on a roster before the draft starts.
+
+    Before a draft, the only way a player sits on a team is if they were kept, which makes
+    pre-draft rosters a reliable keeper source without needing a dedicated endpoint.
+    """
+
+    player_key: str
+    team_key: str
+    # Auction keeper salary, where the league assigns one.
+    cost: int | None = None
+    # Snake keeper round cost (the pick forfeited to keep them), where applicable.
+    round: int | None = None
+    # "yahoo" or "csv" -- shown in the UI so you can see where a keeper came from.
+    source: str = "yahoo"
+
+
+@dataclass(frozen=True)
 class DraftAnalysis:
     """Yahoo's own ADP data -- the single best predictor of a Yahoo draft room."""
 

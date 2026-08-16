@@ -74,7 +74,15 @@ class Assistant:
         if report.unmatched:
             notes.append(f"{len(report.unmatched)} source rows did not match a Yahoo player")
 
-        state.rounds = league.settings.roster_size or state.rounds
+        state.roster_size = league.settings.roster_size or state.roster_size
+        # Recompute rounds from whatever keepers were attached before build().
+        state.apply_keepers(state.keepers)
+
+        if state.keepers:
+            notes.append(
+                f"{len(state.keepers)} keepers held out of the pool; "
+                f"drafting {state.rounds} rounds of a {state.roster_size}-man roster"
+            )
 
         dollars: DollarValues | None = None
         if league.settings.is_auction:
@@ -227,6 +235,19 @@ class Assistant:
             ]
             my_team = state.my_team
             roster_counts = state.my_roster_counts(self.position_of)
+            my_keepers = (
+                [
+                    {
+                        "player": self._player_name(keeper.player_key),
+                        "position": self.position_of.get(keeper.player_key, "?"),
+                        "cost": keeper.cost,
+                        "source": keeper.source,
+                    }
+                    for keeper in state.keepers_for(my_team.team_key)
+                ]
+                if my_team
+                else []
+            )
             auction = (
                 {
                     "budget": state.budget,
@@ -281,6 +302,8 @@ class Assistant:
                 ),
                 "recent_picks": recent,
                 "my_roster": my_roster,
+                "my_keepers": my_keepers,
+                "keeper_count": len(state.keepers),
                 "roster_counts": roster_counts,
                 "staleness": staleness,
                 "sync_error": state.last_sync_error,

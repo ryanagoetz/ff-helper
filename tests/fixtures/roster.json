@@ -1,0 +1,48 @@
+{
+  "fantasy_content": {
+    "team": [
+      [
+        { "team_key": "461.l.123456.t.1" },
+        { "team_id": "1" },
+        { "name": "Team Ryan" }
+      ],
+      {
+        "roster": {
+          "0": {
+            "players": {
+              "0": {
+                "player": [
+                  [
+                    { "player_key": "461.p.100001" },
+                    { "player_id": "100001" },
+                    { "name": { "full": "Ja'Marr Chase" } },
+                    { "editorial_team_abbr": "Cin" },
+                    { "display_position": "WR" },
+                    { "eligible_positions": [{ "position": "WR" }] },
+                    { "is_keeper": { "status": "1", "cost": "55", "kept": "1" } }
+                  ]
+                ]
+              },
+              "1": {
+                "player": [
+                  [
+                    { "player_key": "461.p.100002" },
+                    { "player_id": "100002" },
+                    { "name": { "full": "Kenneth Walker III" } },
+                    { "editorial_team_abbr": "Sea" },
+                    { "display_position": "RB" },
+                    { "eligible_positions": [{ "position": "RB" }] }
+                  ]
+                ]
+              },
+              "count": 2
+            }
+          },
+          "coverage_type": "week",
+          "week": "1",
+          "is_editable": 0
+        }
+      }
+    ]
+  }
+}

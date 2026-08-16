@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ff_helper.yahoo.models import DraftPick, League, Team
+from ff_helper.yahoo.models import DraftPick, KeptPlayer, League, Team
 
 
 def pick_number(round_number: int, slot: int, num_teams: int, *, snake: bool = True) -> int:
@@ -38,7 +38,12 @@ def picks_for_slot(slot: int, num_teams: int, rounds: int, *, snake: bool = True
 class DraftState:
     league: League
     teams: list[Team] = field(default_factory=list)
+
+    # Draft rounds -- how many picks each team makes. In a keeper league this is smaller
+    # than roster_size, because kept players fill spots without using a pick.
     rounds: int = 15
+    # Total roster spots per team, keepers included. Drives budget and slot maths.
+    roster_size: int = 15
     snake: bool = True
 
     # Live draft status (predraft / drafting / postdraft). It lives here rather than on
@@ -50,6 +55,11 @@ class DraftState:
     synced: dict[int, DraftPick] = field(default_factory=dict)
     # Picks entered by hand, same keying. Used when the feed lags or stalls.
     manual: dict[int, DraftPick] = field(default_factory=dict)
+
+    # Players already rostered before the draft. Kept separate from picks on purpose:
+    # they occupy roster spots and money without occupying a pick number, and conflating
+    # the two would corrupt the snake pick maths.
+    keepers: list[KeptPlayer] = field(default_factory=list)
 
     # Bookkeeping surfaced in the UI.
     last_sync: float | None = None
@@ -96,7 +106,34 @@ class DraftState:
 
     @property
     def drafted_player_keys(self) -> set[str]:
-        return {pick.player_key for pick in self.board.values()}
+        """Everyone unavailable: drafted this year, plus anyone kept.
+
+        Keepers belong here because the effect is identical -- you cannot have them -- and
+        leaving them out would mean recommending a player who was never on the board.
+        """
+        return {pick.player_key for pick in self.board.values()} | {
+            keeper.player_key for keeper in self.keepers
+        }
+
+    def keepers_for(self, team_key: str) -> list[KeptPlayer]:
+        return [keeper for keeper in self.keepers if keeper.team_key == team_key]
+
+    def apply_keepers(self, kept: list[KeptPlayer]) -> None:
+        """Attach keepers and shorten the draft accordingly.
+
+        Kept players do not use a pick, so a 15-spot roster with 2 keepers drafts 13
+        rounds. Where teams keep different numbers the most common count is used, since
+        the snake pick maths needs one answer; ``keepers.from_yahoo`` warns when that
+        happens, and the live feed supplies real pick numbers once the draft begins.
+        """
+        self.keepers = list(kept)
+        if not kept:
+            self.rounds = self.roster_size
+            return
+
+        counts = [len(self.keepers_for(team.team_key)) for team in self.teams] or [0]
+        typical = max(set(counts), key=counts.count)
+        self.rounds = max(1, self.roster_size - typical)
 
     @property
     def picks_made(self) -> int:
@@ -168,10 +205,18 @@ class DraftState:
         return sorted(pick for pick in self.board.values() if pick.team_key == team_key)
 
     def roster_counts(self, team_key: str, position_of: dict[str, str]) -> dict[str, int]:
-        """Positions held by a team, using a player_key -> position map."""
+        """Positions held by a team, using a player_key -> position map.
+
+        Includes keepers: a kept running back fills a starting slot exactly as a drafted
+        one does, so leaving them out would have the engine push a position you are
+        already full at.
+        """
         counts: dict[str, int] = {}
-        for pick in self.picks_by_team(team_key):
-            position = position_of.get(pick.player_key)
+        player_keys = [pick.player_key for pick in self.picks_by_team(team_key)]
+        player_keys += [keeper.player_key for keeper in self.keepers_for(team_key)]
+
+        for player_key in player_keys:
+            position = position_of.get(player_key)
             if position:
                 counts[position] = counts.get(position, 0) + 1
         return counts
@@ -249,17 +294,29 @@ class DraftState:
         return settings.auction_budget if settings else 0
 
     def spent(self, team_key: str) -> int:
-        """Dollars a team has already committed."""
-        return sum(pick.cost or 0 for pick in self.board.values() if pick.team_key == team_key)
+        """Dollars a team has already committed, keeper salaries included.
+
+        A keeper's salary is money that team can no longer bid with, so omitting it would
+        overstate their budget and, through the inflation model, over-value everyone left.
+        """
+        drafted = sum(pick.cost or 0 for pick in self.board.values() if pick.team_key == team_key)
+        kept = sum(keeper.cost or 0 for keeper in self.keepers_for(team_key))
+        return drafted + kept
 
     def budget_remaining(self, team_key: str) -> int:
         return self.budget - self.spent(team_key)
 
     def slots_filled(self, team_key: str) -> int:
-        return len(self.picks_by_team(team_key))
+        """Roster spots taken, keepers included -- they take up a spot like anyone else."""
+        return len(self.picks_by_team(team_key)) + len(self.keepers_for(team_key))
 
     def slots_remaining(self, team_key: str) -> int:
-        return max(0, self.rounds - self.slots_filled(team_key))
+        """Open roster spots. Measured against roster_size, not rounds.
+
+        Using rounds here would double-count keepers: they are already in slots_filled,
+        and rounds has been reduced to exclude them.
+        """
+        return max(0, self.roster_size - self.slots_filled(team_key))
 
     def max_bid(self, team_key: str) -> int:
         """The most a team can bid and still fill every roster spot at $1 apiece.

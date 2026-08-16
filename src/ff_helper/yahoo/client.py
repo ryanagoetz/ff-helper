@@ -14,13 +14,14 @@ import httpx
 
 from ff_helper.config import API_BASE, Settings
 from ff_helper.yahoo.auth import AuthError, Token, get_valid_token, refresh
-from ff_helper.yahoo.models import DraftPick, League, Team, YahooPlayer
+from ff_helper.yahoo.models import DraftPick, KeptPlayer, League, Team, YahooPlayer
 from ff_helper.yahoo.parse import content as strip_envelope
 from ff_helper.yahoo.parse import (
     parse_draft_results,
     parse_league,
     parse_leagues,
     parse_players,
+    parse_roster,
     parse_teams,
     unwrap,
 )
@@ -114,6 +115,26 @@ class YahooClient:
 
     def teams(self, league_key: str) -> list[Team]:
         return parse_teams(self.get(f"league/{league_key}/teams"))
+
+    def roster(self, team_key: str) -> list[KeptPlayer]:
+        """Players on a team's roster right now."""
+        return parse_roster(self.get(f"team/{team_key}/roster"), team_key)
+
+    def keepers(self, teams: list[Team]) -> list[KeptPlayer]:
+        """Every player rostered before the draft -- that is, every keeper.
+
+        One request per team, run once at startup rather than during the draft. A team
+        whose roster fails to load is skipped rather than aborting the whole load: a
+        partial keeper list still beats none, and the count is reported so a gap is
+        visible instead of silently shrinking the pool.
+        """
+        kept: list[KeptPlayer] = []
+        for team in teams:
+            try:
+                kept.extend(self.roster(team.team_key))
+            except YahooAPIError:
+                continue
+        return kept
 
     def draft_results(self, league_key: str) -> list[DraftPick]:
         """Every pick made so far. This is what the live poller hits."""

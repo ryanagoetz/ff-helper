@@ -20,9 +20,11 @@ from pydantic import BaseModel
 
 from ff_helper.assistant import Assistant
 from ff_helper.config import Settings, load_settings
+from ff_helper.draft import keepers
 from ff_helper.draft.state import DraftState
 from ff_helper.draft.sync import DraftSync
 from ff_helper.rankings import cache
+from ff_helper.rankings.players import PlayerRegistry
 from ff_helper.yahoo.client import YahooClient
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -155,7 +157,11 @@ def create_app(assistant: Assistant, sync: DraftSync | None) -> FastAPI:
     return app
 
 
-def bootstrap(settings: Settings, league_key: str | None = None) -> tuple[Assistant, DraftSync]:
+def bootstrap(
+    settings: Settings,
+    league_key: str | None = None,
+    keeper_csv: Path | None = None,
+) -> tuple[Assistant, DraftSync]:
     """Load everything needed to serve, failing with advice rather than a traceback."""
     league_key = league_key or settings.league_key
     if not league_key:
@@ -183,7 +189,23 @@ def bootstrap(settings: Settings, league_key: str | None = None) -> tuple[Assist
 
     lock = threading.Lock()
     state = DraftState(league=league, teams=teams)
+
+    # Keepers must be resolved before the assistant is built: they change the player pool,
+    # the roster counts, the budgets and the number of rounds.
+    registry = PlayerRegistry(snapshot.players)
+    rostered: list = []
+    if league.draft_status == "predraft":
+        # Only meaningful pre-draft. Once picks start, a rostered player may simply have
+        # been drafted, and treating those as keepers would double-count them.
+        rostered = client.keepers(teams)
+    try:
+        keeper_set = keepers.resolve(rostered, teams, registry, keeper_csv)
+    except keepers.KeeperError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    state.apply_keepers(keeper_set.kept)
     assistant = Assistant.build(league, state, snapshot, lock=lock)
+    assistant.notes.extend(keeper_set.notes)
 
     sync = DraftSync(client, state, interval=settings.poll_interval, lock=lock)
     return assistant, sync
@@ -196,11 +218,17 @@ def main() -> None:
         help="League key to run against. Defaults to FF_LEAGUE_KEY. Use this to switch "
         "between leagues without editing .env.",
     )
+    parser.add_argument(
+        "--keepers",
+        type=Path,
+        help="CSV of kept players, overriding Yahoo. Columns: player,team,cost,round. "
+        "Use when your league settles keepers outside Yahoo.",
+    )
     parser.add_argument("--port", type=int, default=8777, help="Port to serve on.")
     args = parser.parse_args()
 
     settings = load_settings()
-    assistant, sync = bootstrap(settings, args.league)
+    assistant, sync = bootstrap(settings, args.league, args.keepers)
 
     # Prime the board before serving, so the first page load is already accurate.
     try:

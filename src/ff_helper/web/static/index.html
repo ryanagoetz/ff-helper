@@ -213,9 +213,16 @@ function renderState(s) {
   (s.superseded || []).forEach(m => alerts.push(m));
   $("alerts").innerHTML = alerts.map(a => `<div class="alert">${a}</div>`).join("");
 
-  $("rosterBody").innerHTML = (s.my_roster || []).map(r =>
+  // Keepers first: they are already yours, and seeing them is how you confirm the app
+  // actually knows about them rather than silently leaving them in the pool.
+  const keeperRows = (s.my_keepers || []).map(k =>
+    `<tr><td class="num muted">${k.cost ? "$" + k.cost : "kept"}</td><td>${posTag(k.position)}</td>
+     <td>${k.player} <span class="flag">keeper${k.source === "csv" ? " (csv)" : ""}</span></td></tr>`
+  ).join("");
+  const pickRows = (s.my_roster || []).map(r =>
     `<tr><td class="num muted">${r.pick}</td><td>${posTag(r.position)}</td><td>${r.player}</td></tr>`
-  ).join("") || `<tr><td class="muted">No picks yet.</td></tr>`;
+  ).join("");
+  $("rosterBody").innerHTML = (keeperRows + pickRows) || `<tr><td class="muted">No picks yet.</td></tr>`;
 
   $("rosterCounts").textContent = Object.entries(s.roster_counts || {})
     .map(([k, v]) => `${k} ${v}`).join(" · ");

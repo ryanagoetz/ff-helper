@@ -25,6 +25,7 @@ from ff_helper.yahoo.models import (
     DEFAULT_AUCTION_BUDGET,
     DraftAnalysis,
     DraftPick,
+    KeptPlayer,
     League,
     LeagueSettings,
     RosterSlot,
@@ -234,6 +235,52 @@ def parse_draft_results(payload: dict) -> list[DraftPick]:
             )
         )
     return sorted(picks)
+
+
+def _find_players_collection(node: Any) -> Any:
+    """Locate the ``players`` collection inside a node that may bury it a level down.
+
+    A roster wraps it as ``{"0": {"players": {...}}, "coverage_type": "week"}``, which is
+    one level deeper than every other endpoint puts it, so a plain flatten misses it.
+    """
+    direct = unwrap(node, "players")
+    if direct is not None:
+        return direct
+    for item in collection_items(node):
+        found = unwrap(item, "players")
+        if found is not None:
+            return found
+    return None
+
+
+def parse_roster(payload: dict, team_key: str) -> list[KeptPlayer]:
+    """Players currently rostered by a team.
+
+    Called before the draft, every player this returns is a keeper.
+    """
+    team = unwrap(content(payload), "team")
+    roster = unwrap(team, "roster")
+    players_node = _find_players_collection(roster)
+
+    kept: list[KeptPlayer] = []
+    for entry in collection_items(players_node):
+        player_node = unwrap(entry, "player") or entry
+        flat = flatten(player_node)
+        player_key = flat.get("player_key")
+        if not player_key:
+            continue
+
+        # Yahoo sometimes attaches keeper metadata; take the cost when it is there.
+        keeper_flat = flatten(flat.get("is_keeper")) if flat.get("is_keeper") else {}
+        kept.append(
+            KeptPlayer(
+                player_key=player_key,
+                team_key=team_key,
+                cost=_to_int(keeper_flat.get("cost")),
+                source="yahoo",
+            )
+        )
+    return kept
 
 
 def parse_draft_analysis(node: Any) -> DraftAnalysis:
