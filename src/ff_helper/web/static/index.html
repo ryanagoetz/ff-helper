@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ff-helper</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --line: #2a2f3a;
+    --text: #e6e9ef;
+    --dim: #99a1b3;
+    --accent: #4ade80;
+    --accent-dim: #16a34a;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f5f6f8; --panel: #ffffff; --panel-2: #f0f2f5; --line: #dfe3ea;
+      --text: #14171d; --dim: #5c6577; --accent: #15803d; --accent-dim: #16a34a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 16px; max-width: 1180px; margin-inline: auto;
+  }
+  h1, h2, h3 { margin: 0; font-weight: 650; }
+  .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .grid { display: grid; grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr); gap: 14px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+  .panel + .panel { margin-top: 14px; }
+  .label { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--dim); font-weight: 600; }
+
+  /* Header */
+  header { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
+  .clock { font-size: 30px; font-weight: 700; line-height: 1.1; }
+  .clock small { font-size: 14px; font-weight: 500; color: var(--dim); }
+  .status { text-align: right; font-size: 13px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .ok { background: var(--accent); } .stale { background: var(--warn); } .down { background: var(--bad); }
+
+  /* Turn banner */
+  .turn { border-radius: var(--radius); padding: 10px 16px; margin-bottom: 14px; font-weight: 650; border: 1px solid var(--line); background: var(--panel); }
+  .turn.mine { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; }
+
+  /* Top recommendation */
+  .top { border: 1px solid var(--accent-dim); background: linear-gradient(180deg, var(--panel-2), var(--panel)); }
+  .top .name { font-size: 27px; font-weight: 700; letter-spacing: -.01em; }
+  .top .meta { color: var(--dim); font-size: 14px; margin-top: 2px; }
+  .top .reason { margin-top: 10px; font-size: 15px; }
+  .stats { display: flex; gap: 22px; margin-top: 12px; flex-wrap: wrap; }
+  .stat b { display: block; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .07em; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim); padding: 6px 8px; border-bottom: 1px solid var(--line); font-weight: 600; }
+  td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pos { display: inline-block; min-width: 34px; text-align: center; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--line); }
+  .QB { color: #f472b6; } .RB { color: #4ade80; } .WR { color: #60a5fa; }
+  .TE { color: #fbbf24; } .K { color: #a78bfa; } .DEF { color: #94a3b8; }
+  .why { color: var(--dim); font-size: 13px; }
+  .flag { color: var(--warn); font-size: 11px; }
+
+  /* Controls */
+  input[type=search] { width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font-size: 14px; }
+  button { font: inherit; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); cursor: pointer; }
+  button:hover { border-color: var(--accent-dim); }
+  .results { margin-top: 8px; max-height: 260px; overflow-y: auto; }
+  .results div { padding: 7px 9px; border-radius: 7px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+  .results div:hover { background: var(--panel-2); }
+  .alert { background: rgba(251,191,36,.12); border: 1px solid var(--warn); color: var(--text); padding: 9px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 10px; }
+  .muted { color: var(--dim); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="clock" id="clock">—</div>
+    <div class="muted" id="leagueName">connecting…</div>
+  </div>
+  <div class="status">
+    <div><span class="dot down" id="syncDot"></span><span id="syncText">connecting…</span></div>
+    <div class="muted" id="slotText"></div>
+  </div>
+</header>
+
+<div class="turn" id="turnBanner">—</div>
+<div id="alerts"></div>
+
+<div class="grid">
+  <div>
+    <div class="panel top" id="topCard">
+      <div class="label">Recommended pick</div>
+      <div class="name" id="topName">—</div>
+      <div class="meta" id="topMeta"></div>
+      <div class="reason" id="topReason"></div>
+      <div class="stats" id="topStats"></div>
+    </div>
+
+    <div class="panel">
+      <div class="label" style="margin-bottom:8px">Alternatives</div>
+      <table>
+        <thead><tr>
+          <th>Player</th><th>Pos</th><th class="num">VOR</th><th class="num">VONA</th>
+          <th class="num">ADP</th><th class="num">Survives</th><th>Why</th>
+        </tr></thead>
+        <tbody id="altBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel">
+      <div class="label" style="margin-bottom:8px">Mark a player drafted</div>
+      <input type="search" id="search" placeholder="Type a name if the feed stalls…" autocomplete="off">
+      <div class="results" id="searchResults"></div>
+      <div class="row" style="margin-top:10px">
+        <button id="undoBtn">Undo last manual pick</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="label" style="margin-bottom:8px">My roster</div>
+      <table><tbody id="rosterBody"></tbody></table>
+      <div class="muted" id="rosterCounts" style="margin-top:8px"></div>
+    </div>
+
+    <div class="panel">
+      <div class="label" style="margin-bottom:8px">Recent picks</div>
+      <table><tbody id="recentBody"></tbody></table>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => (n === null || n === undefined) ? "—" : n;
+
+async function getJSON(url, opts) {
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+function posTag(p) { return `<span class="pos ${p}">${p}</span>`; }
+
+function renderState(s) {
+  $("clock").innerHTML = `Pick ${s.current_pick} <small>of ${s.total_picks} &middot; round ${s.round}</small>`;
+  $("leagueName").textContent = s.league;
+  $("slotText").textContent = s.my_slot ? `Your slot: ${s.my_slot}` : "Draft order not published yet";
+
+  // Sync health. The whole point of showing this is so you know when to stop trusting
+  // the feed and start typing picks in yourself.
+  const dot = $("syncDot"), txt = $("syncText");
+  if (!s.sync_running)        { dot.className = "dot down";  txt.textContent = "sync off"; }
+  else if (s.sync_error)      { dot.className = "dot down";  txt.textContent = "sync failing — enter picks manually"; }
+  else if (s.staleness === null) { dot.className = "dot stale"; txt.textContent = "waiting for first sync"; }
+  else if (s.staleness > 15)  { dot.className = "dot down";  txt.textContent = `stale ${Math.round(s.staleness)}s — check the feed`; }
+  else if (s.staleness > 6)   { dot.className = "dot stale"; txt.textContent = `${Math.round(s.staleness)}s behind`; }
+  else                        { dot.className = "dot ok";    txt.textContent = `synced ${Math.round(s.staleness)}s ago`; }
+
+  const banner = $("turnBanner");
+  if (s.draft_status === "predraft") {
+    banner.className = "turn"; banner.textContent = "Draft has not started yet.";
+  } else if (s.is_my_turn) {
+    banner.className = "turn mine";
+    banner.textContent = `You are on the clock — pick ${s.current_pick}. Next pick after this: ${fmt(s.next_pick)}`;
+  } else {
+    banner.className = "turn";
+    const who = s.on_the_clock ? `${s.on_the_clock} is picking` : "Waiting on the next pick";
+    banner.textContent = `${who}. ${s.picks_until_my_turn ?? "—"} picks until your turn.`;
+  }
+
+  const alerts = [];
+  if (s.sync_error) alerts.push(`Sync error: ${s.sync_error}`);
+  (s.superseded || []).forEach(m => alerts.push(m));
+  $("alerts").innerHTML = alerts.map(a => `<div class="alert">${a}</div>`).join("");
+
+  $("rosterBody").innerHTML = (s.my_roster || []).map(r =>
+    `<tr><td class="num muted">${r.pick}</td><td>${posTag(r.position)}</td><td>${r.player}</td></tr>`
+  ).join("") || `<tr><td class="muted">No picks yet.</td></tr>`;
+
+  $("rosterCounts").textContent = Object.entries(s.roster_counts || {})
+    .map(([k, v]) => `${k} ${v}`).join(" · ");
+
+  $("recentBody").innerHTML = (s.recent_picks || []).map(p =>
+    `<tr><td class="num muted">${p.pick}</td><td>${p.player}${p.manual ? ' <span class="flag">manual</span>' : ''}</td>
+     <td class="muted">${p.team}</td></tr>`
+  ).join("") || `<tr><td class="muted">No picks yet.</td></tr>`;
+}
+
+function renderRecommendations(data) {
+  const list = data.recommendations || [];
+  if (!list.length) {
+    $("topName").textContent = "No players available";
+    $("topMeta").textContent = ""; $("topReason").textContent = ""; $("topStats").innerHTML = "";
+    $("altBody").innerHTML = ""; return;
+  }
+
+  const top = list[0];
+  $("topName").innerHTML = `${top.name} ${posTag(top.position)}`;
+  $("topMeta").textContent =
+    `${top.team || "FA"}${top.bye ? " · bye " + top.bye : ""}${top.tier ? " · tier " + top.tier : ""}` +
+    `${top.status ? " · " + top.status : ""}${top.estimated ? " · projection interpolated" : ""}`;
+  $("topReason").textContent = top.reason;
+  $("topStats").innerHTML = `
+    <div class="stat"><b>${top.vona}</b><span>VONA</span></div>
+    <div class="stat"><b>${top.vor}</b><span>VOR</span></div>
+    <div class="stat"><b>${top.points}</b><span>Proj pts</span></div>
+    <div class="stat"><b>${top.adp}</b><span>ADP</span></div>
+    <div class="stat"><b>${Math.round(top.survival * 100)}%</b><span>Survives to next</span></div>`;
+
+  $("altBody").innerHTML = list.slice(1).map(r => `
+    <tr>
+      <td>${r.name}${r.status ? ` <span class="flag">${r.status}</span>` : ""}</td>
+      <td>${posTag(r.position)}</td>
+      <td class="num">${r.vor}</td>
+      <td class="num">${r.vona}</td>
+      <td class="num">${r.adp}</td>
+      <td class="num">${Math.round(r.survival * 100)}%</td>
+      <td class="why">${r.reason}</td>
+    </tr>`).join("");
+}
+
+async function refresh() {
+  try {
+    const [state, recs] = await Promise.all([
+      getJSON("/api/state"), getJSON("/api/recommend?limit=8")
+    ]);
+    renderState(state);
+    renderRecommendations(recs);
+  } catch (err) {
+    $("syncDot").className = "dot down";
+    $("syncText").textContent = "app unreachable";
+  }
+}
+
+// -- manual override -------------------------------------------------------------
+let searchTimer = null;
+$("search").addEventListener("input", e => {
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  if (!q) { $("searchResults").innerHTML = ""; return; }
+  searchTimer = setTimeout(async () => {
+    const data = await getJSON(`/api/search?q=${encodeURIComponent(q)}`);
+    $("searchResults").innerHTML = data.results.map(r =>
+      `<div data-key="${r.player_key}">
+         <span>${r.name} ${posTag(r.position)}</span>
+         <span class="muted">ADP ${r.adp}</span>
+       </div>`).join("") || `<div class="muted">No undrafted match.</div>`;
+  }, 180);
+});
+
+$("searchResults").addEventListener("click", async e => {
+  const row = e.target.closest("[data-key]");
+  if (!row) return;
+  await getJSON("/api/pick", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ player_key: row.dataset.key })
+  });
+  $("search").value = ""; $("searchResults").innerHTML = "";
+  refresh();
+});
+
+$("undoBtn").addEventListener("click", async () => {
+  try { await getJSON("/api/undo", { method: "POST" }); } catch (e) { /* nothing to undo */ }
+  refresh();
+});
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
