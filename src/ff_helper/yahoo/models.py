@@ -67,11 +67,16 @@ class RosterSlot:
         return FLEX_ELIGIBILITY.get(self.position, frozenset({self.position}))
 
 
+# Yahoo's default auction budget. Used only when the league settings do not state one.
+DEFAULT_AUCTION_BUDGET = 200
+
+
 @dataclass(frozen=True)
 class LeagueSettings:
     roster_slots: tuple[RosterSlot, ...]
     stat_modifiers: dict[int, float]
     is_auction: bool
+    auction_budget: int = DEFAULT_AUCTION_BUDGET
 
     @property
     def starting_slots(self) -> tuple[RosterSlot, ...]:

@@ -27,9 +27,52 @@ from ff_helper.yahoo.client import YahooClient
 STATIC_DIR = Path(__file__).parent / "static"
 
 
+def _serialize(pick, is_auction: bool) -> dict:
+    """Common player fields, plus whichever model's numbers apply."""
+    valuation = pick.valuation
+    common = {
+        "player_key": valuation.player_key,
+        "name": pick.name,
+        "position": pick.position,
+        "team": valuation.team,
+        "bye": valuation.bye_week,
+        "status": valuation.status,
+        "tier": valuation.tier,
+        "points": round(valuation.projected_points, 1),
+        "estimated": valuation.points_estimated,
+        "score": round(pick.score, 1),
+        "reason": pick.reason,
+    }
+    if is_auction:
+        common.update(
+            {
+                "value": round(pick.value, 1),
+                "par": round(pick.par, 1),
+                "market": round(pick.market, 1) if pick.market is not None else None,
+                "surplus": round(pick.surplus, 1) if pick.surplus is not None else None,
+                "bid_to": pick.bid_to,
+                "affordable": pick.affordable,
+            }
+        )
+    else:
+        common.update(
+            {
+                "adp": round(valuation.adp, 1),
+                "vor": round(pick.vor, 1),
+                "vona": round(pick.vona, 1),
+                "survival": round(pick.survival_to_next, 3),
+            }
+        )
+    return common
+
+
 class ManualPick(BaseModel):
     player_key: str
     pick: int | None = None
+    # Auction only. Without the price a recorded sale would corrupt every budget and
+    # therefore the whole inflation model, so the UI always sends it.
+    cost: int | None = None
+    team_key: str | None = None
 
 
 def create_app(assistant: Assistant, sync: DraftSync | None) -> FastAPI:
@@ -49,30 +92,16 @@ def create_app(assistant: Assistant, sync: DraftSync | None) -> FastAPI:
     @app.get("/api/recommend")
     def recommend(limit: int = 8) -> dict:
         picks = assistant.recommendations(limit=limit)
-        return {
+        payload = {
+            "draft_type": "auction" if assistant.is_auction else "snake",
             "current_pick": assistant.state.current_pick,
             "is_my_turn": assistant.state.is_my_turn,
-            "recommendations": [
-                {
-                    "player_key": pick.valuation.player_key,
-                    "name": pick.name,
-                    "position": pick.position,
-                    "team": pick.valuation.team,
-                    "bye": pick.valuation.bye_week,
-                    "status": pick.valuation.status,
-                    "tier": pick.valuation.tier,
-                    "adp": round(pick.valuation.adp, 1),
-                    "points": round(pick.valuation.projected_points, 1),
-                    "vor": round(pick.vor, 1),
-                    "vona": round(pick.vona, 1),
-                    "score": round(pick.score, 1),
-                    "survival": round(pick.survival_to_next, 3),
-                    "estimated": pick.valuation.points_estimated,
-                    "reason": pick.reason,
-                }
-                for pick in picks
-            ],
+            "recommendations": [_serialize(pick, assistant.is_auction) for pick in picks],
         }
+        if assistant.is_auction:
+            payload["inflation"] = round(assistant.current_inflation(), 3)
+            payload["max_bid"] = assistant.state.my_max_bid()
+        return payload
 
     @app.get("/api/search")
     def search(q: str, limit: int = 10) -> dict:
@@ -94,9 +123,25 @@ def create_app(assistant: Assistant, sync: DraftSync | None) -> FastAPI:
         """Mark a player drafted by hand, for when the Yahoo feed stalls."""
         if body.player_key not in assistant.valuations.valuations:
             raise HTTPException(status_code=404, detail="Unknown player")
+        if assistant.is_auction:
+            # Both halves matter. Without the price the budget is wrong; without the buyer
+            # the money leaves nobody's budget, so the league looks richer than it is and
+            # every remaining player gets over-valued.
+            if body.cost is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="An auction sale needs the price it went for; budgets depend on it.",
+                )
+            if not body.team_key:
+                raise HTTPException(
+                    status_code=400,
+                    detail="An auction sale needs the buying team; budgets depend on it.",
+                )
         with assistant.lock:
-            entry = assistant.state.record_manual(body.player_key, pick=body.pick)
-        return {"pick": entry.pick, "player_key": entry.player_key}
+            entry = assistant.state.record_manual(
+                body.player_key, pick=body.pick, cost=body.cost, team_key=body.team_key
+            )
+        return {"pick": entry.pick, "player_key": entry.player_key, "cost": entry.cost}
 
     @app.post("/api/undo")
     def undo() -> dict:

@@ -54,6 +54,8 @@ class PlayerValuation:
     status: str = ""
     ecr: float | None = None
     tier: int | None = None
+    # Average auction price across sources -- what the room pays, not what he is worth.
+    market_cost: float | None = None
     # True when projected_points was interpolated rather than projected directly.
     points_estimated: bool = False
     # True when adp was derived from value rank because no source listed the player.
@@ -116,6 +118,7 @@ def blend(
             status=data["status"],
             ecr=data["ecr"],
             tier=data["tier"],
+            market_cost=data["market_cost"],
             points_estimated=data["points_estimated"],
             adp_estimated=data["adp_estimated"],
             sources=tuple(sorted(data["sources"])),
@@ -131,6 +134,7 @@ def _combine(player: YahooPlayer, rows: list[SourceRow], settings: LeagueSetting
     stdevs: list[float] = []
     ecrs: list[float] = []
     tiers: list[int] = []
+    costs: list[float] = []
 
     for row in rows:
         # Only stat lines are usable. A source's own point total bakes in that source's
@@ -149,6 +153,8 @@ def _combine(player: YahooPlayer, rows: list[SourceRow], settings: LeagueSetting
             ecrs.append(row.ecr)
         if row.tier is not None:
             tiers.append(row.tier)
+        if row.auction_cost is not None and row.auction_cost > 0:
+            costs.append(row.auction_cost)
 
     adp = _weighted_adp(adp_values)
     return {
@@ -166,6 +172,7 @@ def _combine(player: YahooPlayer, rows: list[SourceRow], settings: LeagueSetting
         "adp_estimated": False,
         "ecr": statistics.fmean(ecrs) if ecrs else None,
         "tier": min(tiers) if tiers else None,
+        "market_cost": statistics.fmean(costs) if costs else None,
         "sources": {row.source for row in rows},
     }
 

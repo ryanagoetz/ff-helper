@@ -7,14 +7,25 @@ Runs entirely on your own machine. Read-only: it never writes to your league.
 
 ---
 
+Supports **both snake and auction** leagues. It reads the draft type from your league
+settings and switches models automatically — you don't configure anything.
+
 ## What it actually does
 
-The hard part of a draft isn't knowing who's good. It's knowing **who will still be there
-when you pick again**. From slot 5 in a 12-team snake you pick at 5 and 20; fourteen players
-disappear in between. If four comparable receivers will survive that gap but the last good
-running back won't, you take the running back — even if the receiver grades higher.
+The hard part of a draft isn't knowing who's good. It's knowing what it costs you to wait —
+and what "waiting" means depends entirely on the draft format.
 
-That's the calculation this makes, on every pick, in about a second.
+**In a snake draft the scarce resource is picks.** From slot 5 in a 12-team league you pick
+at 5 and 20; fourteen players disappear in between. If four comparable receivers will
+survive that gap but the last good running back won't, you take the running back — even if
+the receiver grades higher.
+
+**In an auction the scarce resource is dollars.** Nobody is ever unavailable, only
+unaffordable, so pick-scarcity vanishes entirely. The questions become: what is he worth in
+dollars, what will the room actually pay, and what can I still afford?
+
+These are genuinely different problems, so they get different engines — sharing the
+valuation layer underneath but nothing above it.
 
 ### Three signals, kept separate
 
@@ -38,7 +49,9 @@ believes. Yahoo's own ADP is weighted heaviest (0.65) because you're drafting in
 room against people looking at Yahoo's rankings.
 
 **Scarcity — what does waiting cost?**
-**VONA** (Value Over Next Available):
+This is the part that differs by format.
+
+*Snake:* **VONA** (Value Over Next Available):
 
 ```
 VONA(player) = VOR(player) − E[VOR of best player at his position at my next pick]
@@ -49,6 +62,28 @@ fat tails — players slide on injury news, get reached for on hype — and a Ga
 someone sitting 20 picks past his ADP mathematically impossible. Survival is also
 conditioned on the player being available *right now*, which is what makes the model
 usable on exactly the fallers you most want advice about.
+
+*Auction:* **surplus** — the same idea in dollars.
+
+```
+surplus(player) = what he's worth to you − what the room will pay
+```
+
+VOR converts to dollars once you know how much money exists and how much value it's
+chasing. Yahoo's `average_cost` is the market price — the auction analog of ADP, and just
+as separate from value.
+
+The live part is **inflation**. Par values are computed once, but money leaves the room
+unevenly. If the league blows its budget on early studs, the dollars left chasing everyone
+else shrink and the survivors get cheap; if the room is thrifty early, they inflate. In
+testing, after twelve teams each spent $150 on a stud, the price level dropped to **28% of
+par** — a $50 player became a $15 player. Recomputing that after every sale is the single
+biggest edge available, because most of the room is still reading a sheet printed before
+the draft started.
+
+Your **max bid** is a hard constraint, not advice: budget remaining minus $1 for every
+roster spot you still have to fill. Players going for more than that are ranked below
+everyone you can actually win, because you can't have them.
 
 Every recommendation comes with a one-line reason, because you're the one making the pick
 and you'll want to overrule it sometimes.
@@ -118,13 +153,32 @@ didn't match and exits non-zero if top-200 coverage drops below 90%.
 uv run ff-helper
 ```
 
-Opens at `http://127.0.0.1:8777`. Put it beside the Yahoo draft client.
+Opens at `http://127.0.0.1:8777`. Put it beside the Yahoo draft client. The page switches
+itself to snake or auction mode based on your league.
 
+**Snake mode**
 - **Recommended pick** — the call, with VOR, VONA, ADP, survival odds, and the reasoning.
 - **Alternatives** — the next seven, same numbers, so you can overrule with your eyes open.
+- **Mark a player drafted** — type a name to record a pick by hand.
+
+**Auction mode**
+- **Budget bar** — your money left, max bid, spots to fill, money still in the room, and
+  the live price level versus par.
+- **Best value on the board** — worth to you, what the room pays, your edge, and the most
+  you should bid.
+- **Mark a player sold** — name, **price**, and **buyer**. All three are required: without
+  the price the budget is wrong, and without the buyer the money leaves nobody's budget and
+  every remaining player gets over-valued.
+
+**Both**
 - **Sync indicator** — green means the feed is live, amber means it's lagging, red means
   stop trusting it.
-- **Mark a player drafted** — type a name to record a pick by hand.
+
+### One setting worth checking for auctions
+
+Yahoo is inconsistent about publishing the auction budget. The app tries several field
+names and falls back to $200. **If your league isn't $200, set `FF_AUCTION_BUDGET` in
+`.env`** — every dollar value scales off it.
 
 ### About that manual override
 
@@ -154,7 +208,7 @@ exercises polling latency, the recommendation loop, and the UI under a real cloc
 doing twice, and worth doing more than a day out.
 
 ```bash
-uv run pytest        # 115 tests, no network required
+uv run pytest        # 148 tests, no network required
 uv run ruff check .
 ```
 
@@ -192,8 +246,12 @@ name — and anything unmatched is reported rather than swallowed.
 
 ## Limitations
 
-- **Snake drafts only.** Auction leagues are detected but not supported.
 - **Keeper/dynasty leagues** aren't modelled; already-kept players need marking manually.
+- **Auction budgets** default to $200 when Yahoo doesn't publish one — override with
+  `FF_AUCTION_BUDGET` if your league differs.
+- **Auction nominations** aren't tracked. Yahoo's API reports completed sales, not who is
+  currently on the block, so the app tells you what everyone is worth rather than reacting
+  to the live nomination.
 - **Kickers and defenses** have no stat projections, so their values are interpolated from
   consensus rank. Fine — you shouldn't be thinking hard about them anyway.
 - **Yahoo bonus stats** (long-TD bonuses and similar) aren't scored.

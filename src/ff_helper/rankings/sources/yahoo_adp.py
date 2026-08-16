@@ -27,6 +27,7 @@ def from_players(players: list[YahooPlayer]) -> list[SourceRow]:
                 team=normalize_team(player.team_abbr),
                 source=SOURCE,
                 adp=analysis.average_pick,
+                auction_cost=analysis.average_cost,
             )
         )
     return rows

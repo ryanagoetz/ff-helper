@@ -13,6 +13,13 @@ from dataclasses import dataclass
 
 from ff_helper.draft.state import DraftState
 from ff_helper.engine import replacement
+from ff_helper.engine.auction import (
+    AuctionRecommendation,
+    DollarValues,
+    compute_par_values,
+    inflation_factor,
+    recommend_auction,
+)
 from ff_helper.engine.replacement import ReplacementLevels
 from ff_helper.engine.vona import Recommendation, recommend
 from ff_helper.rankings.blend import BlendResult, PlayerValuation, blend
@@ -31,6 +38,12 @@ class Assistant:
     levels: ReplacementLevels
     lock: threading.Lock
     notes: list[str]
+    # Populated only for auction leagues.
+    dollars: DollarValues | None = None
+
+    @property
+    def is_auction(self) -> bool:
+        return self.state.is_auction
 
     # -- construction ------------------------------------------------------------------
 
@@ -63,6 +76,20 @@ class Assistant:
 
         state.rounds = league.settings.roster_size or state.rounds
 
+        dollars: DollarValues | None = None
+        if league.settings.is_auction:
+            dollars = compute_par_values(
+                list(valuations.valuations.values()),
+                levels,
+                league.settings,
+                league.num_teams,
+            )
+            notes.append(
+                f"Auction league: ${league.settings.auction_budget} budget, "
+                f"${dollars.dollars_per_vor:.2f} per point of VOR across "
+                f"{dollars.pool_size} rostered players"
+            )
+
         return cls(
             league=league,
             state=state,
@@ -71,6 +98,7 @@ class Assistant:
             levels=levels,
             lock=lock or threading.Lock(),
             notes=notes,
+            dollars=dollars,
         )
 
     # -- views -------------------------------------------------------------------------
@@ -85,7 +113,13 @@ class Assistant:
             valuation for key, valuation in self.valuations.valuations.items() if key not in drafted
         ]
 
-    def recommendations(self, limit: int = 8) -> list[Recommendation]:
+    def recommendations(self, limit: int = 8) -> list[Recommendation] | list[AuctionRecommendation]:
+        """The ranked short list, using whichever model this league's draft calls for."""
+        if self.is_auction:
+            return self.auction_recommendations(limit=limit)
+        return self.snake_recommendations(limit=limit)
+
+    def snake_recommendations(self, limit: int = 8) -> list[Recommendation]:
         """The ranked short list for *your* next turn.
 
         The horizon is always your upcoming pick and the one after it, even when someone
@@ -117,6 +151,49 @@ class Assistant:
             limit=limit,
         )
 
+    def auction_recommendations(self, limit: int = 8) -> list[AuctionRecommendation]:
+        """Where your remaining dollars go furthest, right now.
+
+        Unlike the snake path there is no "my turn" -- every player is biddable at all
+        times -- so this is always live, and always constrained by what you can still pay.
+        """
+        if self.dollars is None or self.league.settings is None:
+            return []
+
+        with self.lock:
+            roster = self.state.my_roster_counts(self.position_of)
+            available = self.available()
+            money_remaining = self.state.league_money_remaining()
+            slots_remaining = self.state.league_slots_remaining()
+            my_max_bid = self.state.my_max_bid()
+
+        if not available:
+            return []
+
+        return recommend_auction(
+            available,
+            self.levels,
+            self.dollars,
+            self.league.settings,
+            roster,
+            money_remaining=money_remaining,
+            slots_remaining=slots_remaining,
+            my_max_bid=my_max_bid,
+            limit=limit,
+        )
+
+    def current_inflation(self) -> float:
+        """Live price level versus par, for display."""
+        if self.dollars is None:
+            return 1.0
+        with self.lock:
+            available = self.available()
+            money = self.state.league_money_remaining()
+            slots = self.state.league_slots_remaining()
+        return inflation_factor(
+            available, self.dollars, money_remaining=money, slots_remaining=slots
+        )
+
     def search(self, query: str, limit: int = 10) -> list[PlayerValuation]:
         """Name search over undrafted players, for the manual override box."""
         needle = query.strip().lower()
@@ -141,6 +218,7 @@ class Assistant:
                 {
                     "pick": pick.pick,
                     "round": pick.round,
+                    "cost": pick.cost,
                     "team": self._team_name(pick.team_key),
                     "player": self._player_name(pick.player_key),
                     "manual": pick.pick in state.manual,
@@ -149,6 +227,30 @@ class Assistant:
             ]
             my_team = state.my_team
             roster_counts = state.my_roster_counts(self.position_of)
+            auction = (
+                {
+                    "budget": state.budget,
+                    "spent": state.spent(my_team.team_key) if my_team else 0,
+                    "remaining": state.budget_remaining(my_team.team_key) if my_team else 0,
+                    "max_bid": state.my_max_bid(),
+                    "slots_filled": state.slots_filled(my_team.team_key) if my_team else 0,
+                    "slots_remaining": state.slots_remaining(my_team.team_key) if my_team else 0,
+                    "league_money_remaining": state.league_money_remaining(),
+                    "teams": [
+                        {
+                            "team_key": team.team_key,
+                            "name": team.name,
+                            "remaining": state.budget_remaining(team.team_key),
+                            "max_bid": state.max_bid(team.team_key),
+                            "slots_remaining": state.slots_remaining(team.team_key),
+                            "is_mine": team.is_mine,
+                        }
+                        for team in state.teams
+                    ],
+                }
+                if state.is_auction
+                else None
+            )
             my_roster = (
                 [
                     {
@@ -165,6 +267,8 @@ class Assistant:
             return {
                 "league": self.league.name,
                 "draft_status": state.draft_status,
+                "draft_type": "auction" if state.is_auction else "snake",
+                "auction": auction,
                 "current_pick": state.current_pick,
                 "total_picks": state.total_picks,
                 "round": (state.current_pick - 1) // max(state.num_teams, 1) + 1,

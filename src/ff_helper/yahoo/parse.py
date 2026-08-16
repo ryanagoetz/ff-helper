@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import Any
 
 from ff_helper.yahoo.models import (
+    DEFAULT_AUCTION_BUDGET,
     DraftAnalysis,
     DraftPick,
     League,
@@ -146,7 +147,27 @@ def parse_settings(node: Any) -> LeagueSettings:
         roster_slots=tuple(slots),
         stat_modifiers=modifiers,
         is_auction=str(flat.get("draft_type", "")).lower() == "auction",
+        auction_budget=_parse_auction_budget(flat),
     )
+
+
+# Yahoo is inconsistent about whether (and under what name) it publishes the auction
+# budget, so try the plausible spellings before falling back to the platform default.
+_BUDGET_KEYS = (
+    "auction_budget_total",
+    "auction_budget",
+    "budget",
+    "draft_budget",
+    "salary_cap",
+)
+
+
+def _parse_auction_budget(flat: dict[str, Any]) -> int:
+    for key in _BUDGET_KEYS:
+        budget = _to_int(flat.get(key))
+        if budget and budget > 0:
+            return budget
+    return DEFAULT_AUCTION_BUDGET
 
 
 def parse_leagues(payload: dict) -> list[League]:

@@ -160,6 +160,9 @@ class SourceRow:
     ecr: float | None = None
     tier: int | None = None
     projected_points: float | None = None
+    # Average auction price. The auction analog of ADP: what the room will pay, which is
+    # a different question from what the player is worth.
+    auction_cost: float | None = None
     stats: dict[str, float] = field(default_factory=dict)
 
 

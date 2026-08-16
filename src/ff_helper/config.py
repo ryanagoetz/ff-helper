@@ -46,6 +46,8 @@ class Settings:
     redirect_uri: str
     league_key: str | None
     poll_interval: float
+    # Overrides the auction budget when Yahoo does not publish one for your league.
+    auction_budget: int | None = None
 
     @property
     def uses_oob(self) -> bool:
@@ -80,4 +82,15 @@ def load_settings(*, require_credentials: bool = True) -> Settings:
         ).strip(),
         league_key=(os.environ.get("FF_LEAGUE_KEY") or "").strip() or None,
         poll_interval=float(os.environ.get("FF_POLL_INTERVAL", "2.0")),
+        auction_budget=_optional_int(os.environ.get("FF_AUCTION_BUDGET")),
     )
+
+
+def _optional_int(raw: str | None) -> int | None:
+    if not raw or not raw.strip():
+        return None
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        return None
+    return value if value > 0 else None

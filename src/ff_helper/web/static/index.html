@@ -97,6 +97,9 @@
 </header>
 
 <div class="turn" id="turnBanner">—</div>
+<div class="panel" id="auctionBar" style="display:none; margin-bottom:14px">
+  <div class="stats" id="auctionStats"></div>
+</div>
 <div id="alerts"></div>
 
 <div class="grid">
@@ -112,10 +115,7 @@
     <div class="panel">
       <div class="label" style="margin-bottom:8px">Alternatives</div>
       <table>
-        <thead><tr>
-          <th>Player</th><th>Pos</th><th class="num">VOR</th><th class="num">VONA</th>
-          <th class="num">ADP</th><th class="num">Survives</th><th>Why</th>
-        </tr></thead>
+        <thead id="altHead"></thead>
         <tbody id="altBody"></tbody>
       </table>
     </div>
@@ -125,6 +125,13 @@
     <div class="panel">
       <div class="label" style="margin-bottom:8px">Mark a player drafted</div>
       <input type="search" id="search" placeholder="Type a name if the feed stalls…" autocomplete="off">
+      <div id="auctionEntry" style="display:none; margin-top:8px">
+        <div class="row">
+          <input type="number" id="soldPrice" min="1" placeholder="$ price" style="width:90px; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); color:var(--text)">
+          <select id="soldTeam" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); color:var(--text)"></select>
+        </div>
+        <div class="muted" style="margin-top:6px">Price and buyer are required — every dollar value depends on them.</div>
+      </div>
       <div class="results" id="searchResults"></div>
       <div class="row" style="margin-top:10px">
         <button id="undoBtn">Undo last manual pick</button>
@@ -147,6 +154,8 @@
 <script>
 const $ = id => document.getElementById(id);
 const fmt = n => (n === null || n === undefined) ? "—" : n;
+const money = n => (n === null || n === undefined) ? "—" : `$${n}`;
+let isAuction = false;
 
 async function getJSON(url, opts) {
   const res = await fetch(url, opts);
@@ -157,9 +166,18 @@ async function getJSON(url, opts) {
 function posTag(p) { return `<span class="pos ${p}">${p}</span>`; }
 
 function renderState(s) {
-  $("clock").innerHTML = `Pick ${s.current_pick} <small>of ${s.total_picks} &middot; round ${s.round}</small>`;
+  isAuction = s.draft_type === "auction";
+
+  if (isAuction) {
+    // Round and draft slot are meaningless in an auction; players sold is what matters.
+    $("clock").innerHTML = `${s.current_pick - 1} <small>of ${s.total_picks} players sold</small>`;
+    $("slotText").textContent = "Auction draft";
+  } else {
+    $("clock").innerHTML = `Pick ${s.current_pick} <small>of ${s.total_picks} &middot; round ${s.round}</small>`;
+    $("slotText").textContent = s.my_slot ? `Your slot: ${s.my_slot}` : "Draft order not published yet";
+  }
   $("leagueName").textContent = s.league;
-  $("slotText").textContent = s.my_slot ? `Your slot: ${s.my_slot}` : "Draft order not published yet";
+  renderAuctionBar(s);
 
   // Sync health. The whole point of showing this is so you know when to stop trusting
   // the feed and start typing picks in yourself.
@@ -174,6 +192,13 @@ function renderState(s) {
   const banner = $("turnBanner");
   if (s.draft_status === "predraft") {
     banner.className = "turn"; banner.textContent = "Draft has not started yet.";
+  } else if (isAuction) {
+    // No turn to wait for: every player is biddable at all times.
+    const a = s.auction || {};
+    banner.className = a.max_bid > 0 ? "turn mine" : "turn";
+    banner.textContent = a.slots_remaining > 0
+      ? `Bid up to $${a.max_bid} — $${a.remaining} left for ${a.slots_remaining} more spots.`
+      : "Your roster is full.";
   } else if (s.is_my_turn) {
     banner.className = "turn mine";
     banner.textContent = `You are on the clock — pick ${s.current_pick}. Next pick after this: ${fmt(s.next_pick)}`;
@@ -196,13 +221,52 @@ function renderState(s) {
     .map(([k, v]) => `${k} ${v}`).join(" · ");
 
   $("recentBody").innerHTML = (s.recent_picks || []).map(p =>
-    `<tr><td class="num muted">${p.pick}</td><td>${p.player}${p.manual ? ' <span class="flag">manual</span>' : ''}</td>
+    `<tr><td class="num muted">${isAuction ? money(p.cost) : p.pick}</td>
+     <td>${p.player}${p.manual ? ' <span class="flag">manual</span>' : ''}</td>
      <td class="muted">${p.team}</td></tr>`
   ).join("") || `<tr><td class="muted">No picks yet.</td></tr>`;
 }
 
+function renderAuctionBar(s) {
+  const bar = $("auctionBar"), entry = $("auctionEntry");
+  if (!isAuction || !s.auction) { bar.style.display = "none"; entry.style.display = "none"; return; }
+  bar.style.display = ""; entry.style.display = "";
+
+  const a = s.auction;
+  $("auctionStats").innerHTML = `
+    <div class="stat"><b>$${a.remaining}</b><span>Budget left</span></div>
+    <div class="stat"><b>$${a.max_bid}</b><span>Max bid</span></div>
+    <div class="stat"><b>${a.slots_remaining}</b><span>Spots to fill</span></div>
+    <div class="stat"><b>$${a.league_money_remaining}</b><span>Money in room</span></div>
+    <div class="stat"><b id="inflationValue">—</b><span>Price level</span></div>`;
+
+  // Buyer dropdown: a sale changes that team's budget, so recording who bought matters
+  // as much as recording the price.
+  const select = $("soldTeam");
+  if (select.options.length !== (a.teams || []).length) {
+    select.innerHTML = (a.teams || []).map(t =>
+      `<option value="${t.team_key}"${t.is_mine ? " selected" : ""}>${t.name}${t.is_mine ? " (you)" : ""} — $${t.remaining}</option>`
+    ).join("");
+  }
+}
+
+const SNAKE_COLUMNS = `<tr>
+  <th>Player</th><th>Pos</th><th class="num">VOR</th><th class="num">VONA</th>
+  <th class="num">ADP</th><th class="num">Survives</th><th>Why</th></tr>`;
+
+const AUCTION_COLUMNS = `<tr>
+  <th>Player</th><th>Pos</th><th class="num">Worth</th><th class="num">Market</th>
+  <th class="num">Edge</th><th class="num">Bid to</th><th>Why</th></tr>`;
+
 function renderRecommendations(data) {
   const list = data.recommendations || [];
+  const auction = data.draft_type === "auction";
+
+  if (data.inflation !== undefined) {
+    const el = $("inflationValue");
+    if (el) el.textContent = `${Math.round(data.inflation * 100)}%`;
+  }
+
   if (!list.length) {
     $("topName").textContent = "No players available";
     $("topMeta").textContent = ""; $("topReason").textContent = ""; $("topStats").innerHTML = "";
@@ -215,14 +279,33 @@ function renderRecommendations(data) {
     `${top.team || "FA"}${top.bye ? " · bye " + top.bye : ""}${top.tier ? " · tier " + top.tier : ""}` +
     `${top.status ? " · " + top.status : ""}${top.estimated ? " · projection interpolated" : ""}`;
   $("topReason").textContent = top.reason;
-  $("topStats").innerHTML = `
+
+  document.querySelector(".top .label").textContent =
+    auction ? "Best value on the board" : "Recommended pick";
+
+  $("topStats").innerHTML = auction ? `
+    <div class="stat"><b>$${top.bid_to}</b><span>Bid up to</span></div>
+    <div class="stat"><b>$${top.value}</b><span>Worth to you</span></div>
+    <div class="stat"><b>${money(top.market)}</b><span>Room pays</span></div>
+    <div class="stat"><b>${top.surplus === null ? "—" : (top.surplus > 0 ? "+" : "") + "$" + top.surplus}</b><span>Edge</span></div>
+    <div class="stat"><b>${top.points}</b><span>Proj pts</span></div>` : `
     <div class="stat"><b>${top.vona}</b><span>VONA</span></div>
     <div class="stat"><b>${top.vor}</b><span>VOR</span></div>
     <div class="stat"><b>${top.points}</b><span>Proj pts</span></div>
     <div class="stat"><b>${top.adp}</b><span>ADP</span></div>
     <div class="stat"><b>${Math.round(top.survival * 100)}%</b><span>Survives to next</span></div>`;
 
-  $("altBody").innerHTML = list.slice(1).map(r => `
+  $("altHead").innerHTML = auction ? AUCTION_COLUMNS : SNAKE_COLUMNS;
+  $("altBody").innerHTML = list.slice(1).map(r => auction ? `
+    <tr${r.affordable ? "" : ' style="opacity:.5"'}>
+      <td>${r.name}${r.status ? ` <span class="flag">${r.status}</span>` : ""}</td>
+      <td>${posTag(r.position)}</td>
+      <td class="num">$${r.value}</td>
+      <td class="num">${money(r.market)}</td>
+      <td class="num">${r.surplus === null ? "—" : (r.surplus > 0 ? "+" : "") + r.surplus}</td>
+      <td class="num">$${r.bid_to}</td>
+      <td class="why">${r.reason}</td>
+    </tr>` : `
     <tr>
       <td>${r.name}${r.status ? ` <span class="flag">${r.status}</span>` : ""}</td>
       <td>${posTag(r.position)}</td>
@@ -266,11 +349,24 @@ $("search").addEventListener("input", e => {
 $("searchResults").addEventListener("click", async e => {
   const row = e.target.closest("[data-key]");
   if (!row) return;
-  await getJSON("/api/pick", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ player_key: row.dataset.key })
-  });
+
+  const body = { player_key: row.dataset.key };
+  if (isAuction) {
+    const price = parseInt($("soldPrice").value, 10);
+    if (!price || price < 1) { $("soldPrice").focus(); return; }
+    body.cost = price;
+    body.team_key = $("soldTeam").value;
+  }
+
+  try {
+    await getJSON("/api/pick", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+  } catch (err) { return; }
+
   $("search").value = ""; $("searchResults").innerHTML = "";
+  if (isAuction) $("soldPrice").value = "";
   refresh();
 });
 

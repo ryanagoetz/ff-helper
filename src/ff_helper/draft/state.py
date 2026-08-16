@@ -204,19 +204,84 @@ class DraftState:
         self.last_sync_error = None
         return new_picks
 
-    def record_manual(self, player_key: str, *, pick: int | None = None) -> DraftPick:
-        """Mark a player drafted by hand, for when the feed stalls mid-draft."""
+    def record_manual(
+        self,
+        player_key: str,
+        *,
+        pick: int | None = None,
+        cost: int | None = None,
+        team_key: str | None = None,
+    ) -> DraftPick:
+        """Mark a player drafted by hand, for when the feed stalls mid-draft.
+
+        In an auction the ``cost`` and ``team_key`` matter as much as the player: budgets
+        drive every dollar value, so a pick recorded without its price would quietly
+        corrupt the inflation model.
+        """
         target = pick if pick is not None else self.current_pick
-        slot = self._slot_for_pick(target)
-        team = next((t for t in self.teams if t.draft_position == slot), None)
+
+        if team_key is None and not self.is_auction:
+            # Snake drafts have a deterministic owner for every pick number.
+            slot = self._slot_for_pick(target)
+            team = next((t for t in self.teams if t.draft_position == slot), None)
+            team_key = team.team_key if team else ""
+
         entry = DraftPick(
             pick=target,
             round=(target - 1) // self.num_teams + 1,
-            team_key=team.team_key if team else "",
+            team_key=team_key or "",
             player_key=player_key,
+            cost=cost,
         )
         self.manual[target] = entry
         return entry
+
+    # -- auction budgets ---------------------------------------------------------------
+
+    @property
+    def is_auction(self) -> bool:
+        settings = self.league.settings
+        return bool(settings and settings.is_auction)
+
+    @property
+    def budget(self) -> int:
+        settings = self.league.settings
+        return settings.auction_budget if settings else 0
+
+    def spent(self, team_key: str) -> int:
+        """Dollars a team has already committed."""
+        return sum(pick.cost or 0 for pick in self.board.values() if pick.team_key == team_key)
+
+    def budget_remaining(self, team_key: str) -> int:
+        return self.budget - self.spent(team_key)
+
+    def slots_filled(self, team_key: str) -> int:
+        return len(self.picks_by_team(team_key))
+
+    def slots_remaining(self, team_key: str) -> int:
+        return max(0, self.rounds - self.slots_filled(team_key))
+
+    def max_bid(self, team_key: str) -> int:
+        """The most a team can bid and still fill every roster spot at $1 apiece.
+
+        This is a hard constraint, not advice: bid past it and you cannot complete a
+        legal roster.
+        """
+        remaining_slots = self.slots_remaining(team_key)
+        if remaining_slots <= 0:
+            return 0
+        return max(0, self.budget_remaining(team_key) - (remaining_slots - 1))
+
+    def my_max_bid(self) -> int:
+        team = self.my_team
+        return self.max_bid(team.team_key) if team else 0
+
+    def league_money_remaining(self) -> int:
+        """Total dollars still unspent across every team -- the pool chasing what is left."""
+        return sum(self.budget_remaining(team.team_key) for team in self.teams)
+
+    def league_slots_remaining(self) -> int:
+        return sum(self.slots_remaining(team.team_key) for team in self.teams)
 
     def undo_last_manual(self) -> DraftPick | None:
         if not self.manual:
