@@ -1,0 +1,39 @@
+{
+  "fantasy_content": {
+    "league": [
+      {
+        "league_key": "461.l.123456",
+        "draft_status": "drafting"
+      },
+      {
+        "draft_results": {
+          "0": {
+            "draft_result": {
+              "pick": 1,
+              "round": 1,
+              "team_key": "461.l.123456.t.4",
+              "player_key": "461.p.100001"
+            }
+          },
+          "1": {
+            "draft_result": {
+              "pick": 2,
+              "round": 1,
+              "team_key": "461.l.123456.t.7",
+              "player_key": "461.p.100002"
+            }
+          },
+          "2": {
+            "draft_result": {
+              "pick": 3,
+              "round": 1,
+              "team_key": "461.l.123456.t.1",
+              "player_key": ""
+            }
+          },
+          "count": 3
+        }
+      }
+    ]
+  }
+}

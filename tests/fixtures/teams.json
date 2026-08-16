@@ -1,0 +1,33 @@
+{
+  "fantasy_content": {
+    "league": [
+      { "league_key": "461.l.123456" },
+      {
+        "teams": {
+          "0": {
+            "team": [
+              [
+                { "team_key": "461.l.123456.t.1" },
+                { "team_id": "1" },
+                { "name": "Team Ryan" },
+                { "is_owned_by_current_login": 1 },
+                { "draft_position": 5 }
+              ]
+            ]
+          },
+          "1": {
+            "team": [
+              [
+                { "team_key": "461.l.123456.t.2" },
+                { "team_id": "2" },
+                { "name": "Rival Squad" },
+                { "draft_position": 9 }
+              ]
+            ]
+          },
+          "count": 2
+        }
+      }
+    ]
+  }
+}

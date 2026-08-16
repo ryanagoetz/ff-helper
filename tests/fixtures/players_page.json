@@ -1,0 +1,89 @@
+{
+  "fantasy_content": {
+    "league": [
+      { "league_key": "461.l.123456" },
+      {
+        "players": {
+          "0": {
+            "player": [
+              [
+                { "player_key": "461.p.100001" },
+                { "player_id": "100001" },
+                {
+                  "name": {
+                    "full": "Ja'Marr Chase",
+                    "first": "Ja'Marr",
+                    "last": "Chase",
+                    "ascii_first": "Ja'Marr",
+                    "ascii_last": "Chase"
+                  }
+                },
+                { "editorial_team_abbr": "Cin" },
+                { "bye_weeks": { "week": "10" } },
+                { "display_position": "WR" },
+                { "eligible_positions": [{ "position": "WR" }] },
+                { "status": "" }
+              ],
+              {
+                "draft_analysis": [
+                  { "average_pick": "1.4" },
+                  { "average_round": "1.0" },
+                  { "average_cost": "55.2" },
+                  { "percent_drafted": "1.00" }
+                ]
+              }
+            ]
+          },
+          "1": {
+            "player": [
+              [
+                { "player_key": "461.p.100002" },
+                { "player_id": "100002" },
+                { "name": { "full": "Kenneth Walker III", "first": "Kenneth", "last": "Walker" } },
+                { "editorial_team_abbr": "Sea" },
+                { "bye_weeks": { "week": "8" } },
+                { "display_position": "RB" },
+                {
+                  "eligible_positions": {
+                    "0": { "position": "RB" },
+                    "1": { "position": "W/R/T" },
+                    "count": 2
+                  }
+                },
+                { "status": "Q" }
+              ],
+              {
+                "draft_analysis": [
+                  { "average_pick": "24.8" },
+                  { "average_round": "3.1" },
+                  { "percent_drafted": "0.98" }
+                ]
+              }
+            ]
+          },
+          "2": {
+            "player": [
+              [
+                { "player_key": "461.p.100003" },
+                { "player_id": "100003" },
+                { "name": { "full": "Travis Kelce" } },
+                { "editorial_team_abbr": "KC" },
+                { "bye_weeks": { "week": "6" } },
+                { "display_position": "TE" },
+                { "eligible_positions": [{ "position": "TE" }] }
+              ],
+              {
+                "draft_analysis": [
+                  { "average_pick": "-" },
+                  { "average_round": "" },
+                  { "percent_drafted": "0.41" }
+                ]
+              }
+            ]
+          },
+          "count": 3
+        }
+      }
+    ]
+  }
+}
