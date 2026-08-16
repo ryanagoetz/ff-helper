@@ -1,0 +1,58 @@
+{
+  "status": "Success",
+  "meta": { "type": "PPR", "teams": 12, "rounds": 15, "total_drafts": 5121 },
+  "players": [
+    {
+      "player_id": 4001,
+      "name": "Ja'Marr Chase",
+      "position": "WR",
+      "team": "CIN",
+      "adp": 1.4,
+      "adp_formatted": "1.01",
+      "times_drafted": 5000,
+      "high": 1,
+      "low": 4,
+      "stdev": 0.6,
+      "bye": 10
+    },
+    {
+      "player_id": 4002,
+      "name": "Ken Walker III",
+      "position": "RB",
+      "team": "SEA",
+      "adp": 26.2,
+      "adp_formatted": "3.02",
+      "times_drafted": 4800,
+      "high": 18,
+      "low": 40,
+      "stdev": 5.1,
+      "bye": 8
+    },
+    {
+      "player_id": 4003,
+      "name": "Travis Kelce",
+      "position": "TE",
+      "team": "KC",
+      "adp": 61.0,
+      "adp_formatted": "6.01",
+      "times_drafted": 3900,
+      "high": 40,
+      "low": 90,
+      "stdev": 11.4,
+      "bye": 6
+    },
+    {
+      "player_id": 4004,
+      "name": "Somebody Notinyahoo",
+      "position": "WR",
+      "team": "FA",
+      "adp": 190.0,
+      "adp_formatted": "16.10",
+      "times_drafted": 12,
+      "high": 150,
+      "low": 220,
+      "stdev": 0,
+      "bye": 7
+    }
+  ]
+}
