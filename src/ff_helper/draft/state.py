@@ -41,6 +41,11 @@ class DraftState:
     rounds: int = 15
     snake: bool = True
 
+    # Live draft status (predraft / drafting / postdraft). It lives here rather than on
+    # League because League is a frozen snapshot of what the API returned, and this is the
+    # one field that changes underneath us while the app is running.
+    _draft_status: str | None = None
+
     # Picks Yahoo has confirmed, keyed by overall pick number.
     synced: dict[int, DraftPick] = field(default_factory=dict)
     # Picks entered by hand, same keying. Used when the feed lags or stalls.
@@ -52,6 +57,14 @@ class DraftState:
     superseded: list[str] = field(default_factory=list)
 
     # -- identity ----------------------------------------------------------------------
+
+    @property
+    def draft_status(self) -> str:
+        return self._draft_status or self.league.draft_status
+
+    @draft_status.setter
+    def draft_status(self, value: str) -> None:
+        self._draft_status = value
 
     @property
     def num_teams(self) -> int:

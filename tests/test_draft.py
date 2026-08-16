@@ -230,3 +230,58 @@ class TestSync:
         board = DraftState(league=league(status="predraft"), teams=teams())
         sync = DraftSync(FakeClient([]), board, interval=2.0, lock=threading.Lock())
         assert sync._current_interval() > 2.0
+
+    def test_draft_status_updates_without_mutating_the_frozen_league(self):
+        board = DraftState(league=league(status="predraft"), teams=teams())
+        sync = DraftSync(FakeClient([]), board, lock=threading.Lock())
+
+        assert board.draft_status == "predraft"
+        sync.refresh_status()
+        assert board.draft_status == "drafting"
+        # League is a frozen snapshot of what the API returned and must stay untouched.
+        assert board.league.draft_status == "predraft"
+
+
+class TestConcurrency:
+    def test_locked_reads_see_a_consistent_board(self):
+        """The sync thread and the UI read the same board, and must not tear.
+
+        The risk here is *not* a crash. ``board`` builds its merged view with C-level dict
+        operations that do not yield under the GIL, so an unlocked read will not raise --
+        which is exactly what makes this worth pinning down, because the failure is silent.
+
+        What can go wrong is a torn read: a caller samples ``current_pick``, the poller
+        inserts that very pick, and the caller then reads a board where its own pick is
+        already taken. Recommendations would be computed for a pick that no longer exists.
+        Holding the lock across the whole read is what prevents that.
+        """
+        board = state()
+        lock = threading.Lock()
+        failures: list[str] = []
+
+        def writer():
+            for pick in range(1, 301):
+                with lock:
+                    board.synced[pick] = DraftPick(
+                        pick=pick, round=1, team_key="t.1", player_key=f"p.{pick}"
+                    )
+
+        def reader():
+            for _ in range(300):
+                with lock:
+                    current = board.current_pick
+                    drafted = board.drafted_player_keys
+                    made = board.picks_made
+                # Sampled under one lock, these must agree with each other.
+                if current != made + 1:
+                    failures.append(f"current_pick {current} vs picks_made {made}")
+                if len(drafted) != made:
+                    failures.append(f"{len(drafted)} drafted vs picks_made {made}")
+
+        threads = [threading.Thread(target=writer), threading.Thread(target=reader)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        assert not failures, f"torn read: {failures[:3]}"

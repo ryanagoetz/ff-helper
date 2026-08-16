@@ -122,7 +122,11 @@ class Assistant:
         needle = query.strip().lower()
         if not needle:
             return []
-        matches = [v for v in self.available() if needle in v.name.lower()]
+        # Hold the lock while reading the board: the poller writes to it from another
+        # thread, and an unlocked read can return a player the poller just marked drafted.
+        with self.lock:
+            available = self.available()
+        matches = [v for v in available if needle in v.name.lower()]
         matches.sort(key=lambda v: v.adp)
         return matches[:limit]
 
@@ -160,7 +164,7 @@ class Assistant:
 
             return {
                 "league": self.league.name,
-                "draft_status": self.league.draft_status,
+                "draft_status": state.draft_status,
                 "current_pick": state.current_pick,
                 "total_picks": state.total_picks,
                 "round": (state.current_pick - 1) // max(state.num_teams, 1) + 1,

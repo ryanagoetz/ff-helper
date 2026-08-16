@@ -86,7 +86,7 @@ class DraftSync:
         """Re-read draft_status so we know when predraft becomes drafting."""
         status = self.client.draft_status(self.state.league.league_key)
         with self.lock:
-            object.__setattr__(self.state.league, "draft_status", status)
+            self.state.draft_status = status
         return status
 
     def _current_interval(self) -> float:
@@ -94,14 +94,14 @@ class DraftSync:
             # Back off on repeated failure so a dead endpoint is not hammered, but keep
             # the ceiling low enough that recovery is noticed quickly.
             return min(MAX_BACKOFF, self.interval * (2**self.consecutive_failures))
-        if self.state.league.draft_status == "predraft":
+        if self.state.draft_status == "predraft":
             return PREDRAFT_INTERVAL
         return self.interval
 
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                if self.state.league.draft_status == "predraft":
+                if self.state.draft_status == "predraft":
                     self.refresh_status()
 
                 new_picks = self.poll_once()
