@@ -7,6 +7,7 @@ framework, because on draft day the app has to start the first time, every time.
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import threading
 import webbrowser
@@ -154,18 +155,20 @@ def create_app(assistant: Assistant, sync: DraftSync | None) -> FastAPI:
     return app
 
 
-def bootstrap(settings: Settings) -> tuple[Assistant, DraftSync]:
+def bootstrap(settings: Settings, league_key: str | None = None) -> tuple[Assistant, DraftSync]:
     """Load everything needed to serve, failing with advice rather than a traceback."""
-    if not settings.league_key:
+    league_key = league_key or settings.league_key
+    if not league_key:
         raise SystemExit(
-            "FF_LEAGUE_KEY is not set in .env.\nRun `python scripts/setup_auth.py` to list "
-            "your leagues, then paste the key into .env."
+            "No league key.\nRun `python scripts/setup_auth.py` to list your leagues, then "
+            "either paste the key into .env as FF_LEAGUE_KEY or pass --league."
         )
 
-    snapshot = cache.load(settings.league_key)
+    snapshot = cache.load(league_key)
     if snapshot is None:
         raise SystemExit(
-            "No ranking snapshot found.\nRun `python scripts/fetch_rankings.py` first "
+            f"No ranking snapshot found for {league_key}.\n"
+            f"Run `python scripts/fetch_rankings.py --league {league_key}` first "
             "(ideally the day before your draft)."
         )
     if snapshot.age_hours > 48:
@@ -175,8 +178,8 @@ def bootstrap(settings: Settings) -> tuple[Assistant, DraftSync]:
         )
 
     client = YahooClient(settings)
-    league = client.league(settings.league_key)
-    teams = client.teams(settings.league_key)
+    league = client.league(league_key)
+    teams = client.teams(league_key)
 
     lock = threading.Lock()
     state = DraftState(league=league, teams=teams)
@@ -187,8 +190,17 @@ def bootstrap(settings: Settings) -> tuple[Assistant, DraftSync]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(prog="ff-helper", description="Live draft assistant.")
+    parser.add_argument(
+        "--league",
+        help="League key to run against. Defaults to FF_LEAGUE_KEY. Use this to switch "
+        "between leagues without editing .env.",
+    )
+    parser.add_argument("--port", type=int, default=8777, help="Port to serve on.")
+    args = parser.parse_args()
+
     settings = load_settings()
-    assistant, sync = bootstrap(settings)
+    assistant, sync = bootstrap(settings, args.league)
 
     # Prime the board before serving, so the first page load is already accurate.
     try:
@@ -199,7 +211,7 @@ def main() -> None:
     sync.start()
     app = create_app(assistant, sync)
 
-    url = "http://127.0.0.1:8777"
+    url = f"http://127.0.0.1:{args.port}"
     print(f"\n  ff-helper ready at {url}")
     print(f"  {assistant.league.name} -- {len(assistant.valuations.valuations)} players valued")
     if assistant.state.my_slot:
@@ -214,7 +226,7 @@ def main() -> None:
         webbrowser.open(url)
 
     try:
-        uvicorn.run(app, host="127.0.0.1", port=8777, log_level="warning")
+        uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
     finally:
         sync.stop()
 

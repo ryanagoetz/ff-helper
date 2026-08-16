@@ -174,6 +174,21 @@ itself to snake or auction mode based on your league.
 - **Sync indicator** — green means the feed is live, amber means it's lagging, red means
   stop trusting it.
 
+### Running more than one league
+
+Snapshots are cached per league, so nothing collides. Build one snapshot per league, then
+point the app at whichever you're drafting:
+
+```bash
+python scripts/fetch_rankings.py --league 461.l.111111   # snake league
+python scripts/fetch_rankings.py --league 461.l.222222   # auction league
+
+uv run ff-helper --league 461.l.111111
+uv run ff-helper --league 461.l.222222 --port 8778       # both at once, if drafts overlap
+```
+
+`FF_LEAGUE_KEY` in `.env` is just the default when you don't pass `--league`.
+
 ### One setting worth checking for auctions
 
 Yahoo is inconsistent about publishing the auction budget. The app tries several field

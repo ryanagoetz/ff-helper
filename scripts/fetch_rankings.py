@@ -17,6 +17,7 @@ ADP data courtesy of Fantasy Football Calculator (fantasyfootballcalculator.com)
 
 from __future__ import annotations
 
+import argparse
 import sys
 import time
 from pathlib import Path
@@ -40,17 +41,27 @@ TOP_N = 200
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--league",
+        help="League key to snapshot. Defaults to FF_LEAGUE_KEY. Snapshots are cached per "
+        "league, so run this once per league if you are in more than one.",
+    )
+    args = parser.parse_args()
+
     settings = load_settings()
-    if not settings.league_key:
-        print("FF_LEAGUE_KEY is not set in .env. Run scripts/setup_auth.py to list your leagues.")
+    league_key = args.league or settings.league_key
+    if not league_key:
+        print("No league key. Set FF_LEAGUE_KEY in .env or pass --league.")
+        print("Run scripts/setup_auth.py to list your leagues.")
         return 1
 
     notes: list[str] = []
     rows: list[SourceRow] = []
 
     with YahooClient(settings) as client:
-        print(f"Fetching league {settings.league_key} ...")
-        league = client.league(settings.league_key)
+        print(f"Fetching league {league_key} ...")
+        league = client.league(league_key)
         if league.settings is None:
             print("Could not read league settings; cannot score projections.")
             return 1
@@ -59,7 +70,7 @@ def main() -> int:
         print(f"  {league.name}: {league.num_teams} teams, {slug} scoring")
 
         print("Fetching Yahoo player pool (this walks 25 players per request) ...")
-        players = client.players(settings.league_key, limit=600)
+        players = client.players(league_key, limit=600)
         print(f"  {len(players)} players")
 
     # -- external sources. One failing must not sink the run. -----------------------
@@ -118,7 +129,7 @@ def main() -> int:
     print(f"\nTop-{TOP_N} coverage: {top_coverage:.1%}")
 
     snapshot = cache.Snapshot(
-        league_key=settings.league_key,
+        league_key=league_key,
         fetched_at=time.time(),
         players=players,
         rows=rows,

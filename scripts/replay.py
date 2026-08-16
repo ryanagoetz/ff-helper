@@ -87,7 +87,9 @@ def main() -> int:
         print("No league key. Set FF_LEAGUE_KEY in .env or pass --league.")
         return 1
 
-    snapshot = cache.load(settings.league_key or league_key)
+    # Snapshots are keyed by league, so replaying a different league must load that
+    # league's snapshot -- not whichever one happens to be in .env.
+    snapshot = cache.load(league_key)
     if snapshot is None:
         print("No ranking snapshot found. Run scripts/fetch_rankings.py first.")
         return 1
