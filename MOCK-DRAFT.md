@@ -2,24 +2,19 @@
 
 ## First, how the pieces fit
 
-There are two ways a sale can reach the board, and they are at different stages of ready:
+Three ways a sale can reach the board, in increasing order of doing the work for you:
 
-- **Typing**, one sale at a time on the keyboard. Works today. Right now it is the *only*
-  path known to work, so it is the one to be fluent in.
-- **Pasting** Yahoo's whole sold list in one go. Built and tested — but only against
-  sample text invented for the purpose. Nobody has seen what Yahoo's 2026 draft room
-  actually produces when you copy it, so whether it works on Saturday is unknown.
+1. **Typing** one sale at a time. Always works, needs nothing, and is the fallback for
+   everything else. Be fluent in it regardless.
+2. **Pasting** Yahoo's whole sold list into ff-helper. Proven against text copied out of a
+   real draft room, so this is now the expected way to work on Saturday: every few
+   minutes, copy and paste, and it catches up everything — including sales you missed
+   while bidding, which typing cannot recover.
+3. **The reader** — a Tampermonkey script that does the pasting for you every few seconds.
+   Written, but never yet run against a live room. That is what the mock is for.
 
-That unknown is what the mock resolves. **Job A below is not a draft-day activity** — it
-is you capturing a sample of Yahoo's real output once, so the paste path can be finished
-against the real thing rather than a guess.
-
-Depending on how Job A goes, Saturday looks like one of two things:
-
-| Job A outcome | Saturday |
-|---|---|
-| The copy is clean | Paste is primary — copy the sold list every few minutes, one action catches up everything, including sales you missed. Typing drops to corrections. |
-| The copy is messy or blocked | You type all ~180 sales, and the keyboard drill is what carries you. |
+Everything from here is about moving up that list with evidence, and never losing the step
+below it.
 
 ## The two jobs
 
@@ -36,9 +31,11 @@ sales.
 
 ---
 
-## Job A — capture what Yahoo's copy actually produces
+## Job A — capture what Yahoo's copy produces (already done once)
 
-This is the one that unblocks everything else. Five minutes.
+The sample you sent has been turned into a parser and a test fixture, so this only needs
+repeating if the live room looks different from the results panel you copied. If it does,
+follow this again and send the new text.
 
 1. Go to **https://football.fantasysports.yahoo.com** and find the mock draft lobby.
    **Join an auction mock if one is offered.** If only snake mocks are available, join one
@@ -58,13 +55,14 @@ which one we need.
 **What I need from the text:** the player name, the price, and the buying team, and how
 they are separated. Everything else follows from that.
 
-While you are in the room, also note:
+While you are in the room, also note whether team names appear **in full** or truncated.
+This matters most for `Rx...` — if the room shows something different from your config,
+buyer matching fails, and it fails on *your* team, the one that sets your max bid. There
+is a `team_aliases:` block in the config for exactly that.
 
-- the **URL of the draft page** (the whole thing) — the automated reader needs the exact
-  origin, and the draft client may live on a different subdomain than the league;
-- whether team names appear **in full**, or truncated with an ellipsis. This matters most
-  for `Rx...` — if the room shows something different from your config, buyer matching
-  fails and it fails on *your* team, which is the one that sets your max bid.
+The draft page URL is already known: the client is on
+`https://football.fantasysports.yahoo.com/draftclient/...`, the same origin as the rest of
+Yahoo Fantasy. Its `?auth=` parameter is a session credential — do not paste it anywhere.
 
 ---
 
@@ -137,8 +135,6 @@ Now break it on purpose, so you recognise it on Saturday:
 
 Stop the app with **Ctrl+C** and start it again. The board is empty. Nothing is written to
 disk.
-
----
 
 ---
 
