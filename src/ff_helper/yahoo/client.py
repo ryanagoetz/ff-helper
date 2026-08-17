@@ -120,21 +120,27 @@ class YahooClient:
         """Players on a team's roster right now."""
         return parse_roster(self.get(f"team/{team_key}/roster"), team_key)
 
-    def keepers(self, teams: list[Team]) -> list[KeptPlayer]:
+    def keepers(self, teams: list[Team]) -> tuple[list[KeptPlayer], list[str]]:
         """Every player rostered before the draft -- that is, every keeper.
 
         One request per team, run once at startup rather than during the draft. A team
-        whose roster fails to load is skipped rather than aborting the whole load: a
-        partial keeper list still beats none, and the count is reported so a gap is
-        visible instead of silently shrinking the pool.
+        whose roster fails to load is skipped rather than aborting the whole load, but the
+        failure is *returned* alongside the keepers rather than swallowed: a team silently
+        missing from the list leaves its keepers in the pool all draft, which is the exact
+        quiet failure ``draft.keepers`` exists to prevent. The caller surfaces the names.
+
+        The catch is deliberately broad. ``get`` can also raise ``AuthError`` (a sibling of
+        ``YahooAPIError``, not a subclass) and ``JSONDecodeError``, and either escaping
+        here would abort startup over one unreachable team.
         """
         kept: list[KeptPlayer] = []
+        failed: list[str] = []
         for team in teams:
             try:
                 kept.extend(self.roster(team.team_key))
-            except YahooAPIError:
-                continue
-        return kept
+            except Exception as exc:  # noqa: BLE001 - reported, never swallowed
+                failed.append(f"{team.name or team.team_key} ({exc})")
+        return kept, failed
 
     def draft_results(self, league_key: str) -> list[DraftPick]:
         """Every pick made so far. This is what the live poller hits."""

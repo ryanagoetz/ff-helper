@@ -12,6 +12,7 @@ happened, but a manual entry is never silently discarded: it is superseded and r
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 
 from ff_helper.yahoo.models import DraftPick, KeptPlayer, League, Team
@@ -43,7 +44,10 @@ class DraftState:
     # than roster_size, because kept players fill spots without using a pick.
     rounds: int = 15
     # Total roster spots per team, keepers included. Drives budget and slot maths.
-    roster_size: int = 15
+    # Left at 0 it follows ``rounds``, so constructing a state with a custom round count
+    # cannot silently leave the two disagreeing (which would make slots_remaining, and
+    # therefore max_bid, measure against the wrong roster).
+    roster_size: int = 0
     snake: bool = True
 
     # Live draft status (predraft / drafting / postdraft). It lives here rather than on
@@ -65,6 +69,10 @@ class DraftState:
     last_sync: float | None = None
     last_sync_error: str | None = None
     superseded: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.roster_size:
+            self.roster_size = self.rounds
 
     # -- identity ----------------------------------------------------------------------
 
@@ -116,7 +124,32 @@ class DraftState:
         }
 
     def keepers_for(self, team_key: str) -> list[KeptPlayer]:
-        return [keeper for keeper in self.keepers if keeper.team_key == team_key]
+        """A team's keepers, minus any the draft feed has since reported as a pick.
+
+        Yahoo lists kept players inside ``draftresults`` in some keeper leagues, and a
+        pick can also be entered by hand. Counting a player as both a keeper and a pick
+        would charge their salary twice and take two roster spots for one player, so the
+        board wins wherever the two overlap.
+        """
+        on_board = {pick.player_key for pick in self.board.values()}
+        return [
+            keeper
+            for keeper in self.keepers
+            if keeper.team_key == team_key and keeper.player_key not in on_board
+        ]
+
+    def keeper_counts(self) -> dict[str, int]:
+        """Keepers per team, counting every team -- including those who kept nobody.
+
+        The zeros matter: a league where half the teams kept two and half kept none is
+        uneven, and leaving the empty teams out of the tally would make it look uniform.
+        Keepers the board has since claimed are excluded, matching ``keepers_for``.
+        """
+        on_board = {pick.player_key for pick in self.board.values()}
+        counts = Counter(
+            keeper.team_key for keeper in self.keepers if keeper.player_key not in on_board
+        )
+        return {team.team_key: counts.get(team.team_key, 0) for team in self.teams}
 
     def apply_keepers(self, kept: list[KeptPlayer]) -> None:
         """Attach keepers and shorten the draft accordingly.
@@ -124,15 +157,32 @@ class DraftState:
         Kept players do not use a pick, so a 15-spot roster with 2 keepers drafts 13
         rounds. Where teams keep different numbers the most common count is used, since
         the snake pick maths needs one answer; ``keepers.from_yahoo`` warns when that
-        happens, and the live feed supplies real pick numbers once the draft begins.
+        happens. Note this stays approximate for the whole draft: nothing derives pick
+        numbers back out of the feed, so a rival's countdown can be off even though
+        ``my_picks`` uses my own keeper count and ``total_picks`` is summed per team.
+        ``total_picks`` stays exact regardless, so an uneven league cannot end the draft
+        early.
+
+        Duplicates are dropped on the way in. One player cannot fill two roster spots or
+        spend two salaries, so a list that names them twice -- a CSV listing a player under
+        both teams of a trade, or a roster read taken after the draft opened -- must not be
+        stored twice.
         """
-        self.keepers = list(kept)
-        if not kept:
+        seen: set[str] = set()
+        deduped: list[KeptPlayer] = []
+        for keeper in kept:
+            if keeper.player_key in seen:
+                continue
+            seen.add(keeper.player_key)
+            deduped.append(keeper)
+
+        self.keepers = deduped
+        if not deduped:
             self.rounds = self.roster_size
             return
 
-        counts = [len(self.keepers_for(team.team_key)) for team in self.teams] or [0]
-        typical = max(set(counts), key=counts.count)
+        counts = list(self.keeper_counts().values()) or [0]
+        typical = Counter(counts).most_common(1)[0][0]
         self.rounds = max(1, self.roster_size - typical)
 
     @property
@@ -152,7 +202,15 @@ class DraftState:
 
     @property
     def total_picks(self) -> int:
-        return self.num_teams * self.rounds
+        """Picks that will actually be made, keepers excluded.
+
+        Summed per team rather than ``num_teams * rounds``: ``rounds`` collapses uneven
+        keeper counts to one number, and under-counting here makes ``is_complete`` true
+        while picks are still coming -- which stops the poller mid-draft.
+        """
+        if not self.teams:
+            return self.num_teams * self.rounds
+        return sum(max(0, self.roster_size - count) for count in self.keeper_counts().values())
 
     @property
     def is_complete(self) -> bool:
@@ -162,10 +220,21 @@ class DraftState:
 
     @property
     def my_picks(self) -> list[int]:
+        """My turns, using *my* round count rather than the league-wide mode.
+
+        If I kept fewer players than most of the league I draft more times than ``rounds``
+        says, and using the collapsed number would drop my last picks off the board
+        entirely -- no next pick, no countdown, and a VONA horizon computed against a gap
+        that does not exist.
+        """
         slot = self.my_slot
         if slot is None:
             return []
-        return picks_for_slot(slot, self.num_teams, self.rounds, snake=self.snake)
+        team = self.my_team
+        rounds = self.rounds
+        if team is not None:
+            rounds = max(1, self.roster_size - len(self.keepers_for(team.team_key)))
+        return picks_for_slot(slot, self.num_teams, rounds, snake=self.snake)
 
     @property
     def is_my_turn(self) -> bool:
@@ -298,8 +367,27 @@ class DraftState:
 
         A keeper's salary is money that team can no longer bid with, so omitting it would
         overstate their budget and, through the inflation model, over-value everyone left.
+
+        Every player is charged exactly once, at the best price known for them. That last
+        part matters: ``keepers_for`` lets the board win on overlap so a kept player never
+        occupies two roster spots, but Yahoo lists kept players in ``draftresults`` with no
+        sale price -- because no sale happened -- so taking the board's cost blindly would
+        drop the salary to zero. Deduplicating must not turn double-counting into
+        zero-counting.
         """
-        drafted = sum(pick.cost or 0 for pick in self.board.values() if pick.team_key == team_key)
+        salaries = {
+            keeper.player_key: keeper.cost
+            for keeper in self.keepers
+            if keeper.team_key == team_key and keeper.cost is not None
+        }
+
+        drafted = 0
+        for pick in self.board.values():
+            if pick.team_key != team_key:
+                continue
+            cost = pick.cost if pick.cost is not None else salaries.get(pick.player_key)
+            drafted += cost or 0
+
         kept = sum(keeper.cost or 0 for keeper in self.keepers_for(team_key))
         return drafted + kept
 

@@ -183,8 +183,13 @@ keeper list. The app reads them at startup and keepers then:
 - drop out of the player pool, so they're never recommended to you;
 - count toward your roster needs, so it won't push a position you're already full at;
 - **spend their salary** in auction leagues, which shrinks both your max bid and the money
-  in the room (and therefore moves inflation);
+  in the room (and therefore moves inflation) — when Yahoo publishes a salary, see the CSV
+  note below when it doesn't;
 - **shorten the draft** — 15 spots with 2 keepers each is a 13-round draft.
+
+Rosters are read on every start, not just before the draft opens, so restarting mid-draft
+keeps them. A player the board already shows as drafted is counted as a pick, not a keeper,
+so nothing is charged twice.
 
 Your keepers are listed at the top of the roster panel so you can confirm the app actually
 knows about them. If that list is empty when it shouldn't be, stop and fix it before
@@ -202,9 +207,16 @@ Ja'Marr Chase,Team Ryan,55,2
 Kenneth Walker III,Rival Squad,,4
 ```
 
-`team` matches a Yahoo team name or key. `cost` matters for auctions, `round` for
-keeper-snake leagues that charge a pick; both are optional. Column names are flexible
-(`name`/`owner`/`salary` all work).
+`team` matches a Yahoo team name or key. `cost` matters for auctions; both it and `round`
+are optional. Column names are flexible (`name`/`owner`/`salary` all work).
+
+`round` is recorded but does not yet feed the pick maths — forfeited picks are not
+modelled, so a keeper-snake league that charges a round still gets uniform pick numbers.
+
+**In an auction, supply `cost`.** Yahoo often publishes no keeper salary, and a salary the
+app does not know is spent as $0 — which leaves that money apparently in the room and
+inflates every price it recommends. The app warns loudly when this happens, but the CSV is
+the fix.
 
 A name that can't be matched is a **hard error**, not a skipped row — a half-loaded keeper
 file leaves players in the pool who aren't really available, which is worse than no file at
@@ -259,7 +271,7 @@ exercises polling latency, the recommendation loop, and the UI under a real cloc
 doing twice, and worth doing more than a day out.
 
 ```bash
-uv run pytest        # 177 tests, no network required
+uv run pytest        # 202 tests, no network required
 uv run ruff check .
 ```
 
@@ -297,9 +309,11 @@ name — and anything unmatched is reported rather than swallowed.
 
 ## Limitations
 
-- **Uneven keeper counts** (teams keeping different numbers) make pick-number predictions
-  approximate, because the number of picks per team stops being uniform. The app says so
-  when it detects this, and the live feed corrects the board once the draft starts.
+- **Uneven keeper counts** (teams keeping different numbers) make *other teams'* pick
+  numbers approximate, because the number of picks per team stops being uniform. Your own
+  turns are computed from your own keeper count, so they stay exact; what can drift is the
+  countdown to a rival's pick. The app says so when it detects this. This stays approximate
+  for the whole draft — nothing reconstructs the real pick order from the live feed.
 - **Auction budgets** default to $200 when Yahoo doesn't publish one — override with
   `FF_AUCTION_BUDGET` if your league differs.
 - **Auction nominations** aren't tracked. Yahoo's API reports completed sales, not who is

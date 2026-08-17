@@ -84,6 +84,29 @@ class Assistant:
                 f"drafting {state.rounds} rounds of a {state.roster_size}-man roster"
             )
 
+            unvalued = [k for k in state.keepers if k.player_key not in valuations.valuations]
+            if unvalued:
+                # A keeper the snapshot never saw shows as a bare player key in the roster
+                # panel and counts toward no position, so the engine keeps recommending the
+                # spot it already fills.
+                notes.append(
+                    f"{len(unvalued)} keepers are not in the ranking snapshot, so they fill "
+                    "no position in roster counts -- re-run scripts/fetch_rankings.py with a "
+                    "larger --limit if this matters"
+                )
+
+            if league.settings.is_auction:
+                unpriced = [k for k in state.keepers if k.cost is None]
+                if unpriced:
+                    # Unknown is not free. `spent()` can only treat a missing salary as $0,
+                    # which leaves that money in the room: inflation reads the league as
+                    # cash-rich against fewer slots and every bid ceiling comes out high.
+                    notes.append(
+                        f"WARNING: {len(unpriced)} of {len(state.keepers)} keepers have no "
+                        "salary from Yahoo and are being counted as $0. Budgets and "
+                        "inflation are overstated until you supply them with --keepers."
+                    )
+
         dollars: DollarValues | None = None
         if league.settings.is_auction:
             dollars = compute_par_values(
@@ -234,12 +257,15 @@ class Assistant:
                 for pick in board
             ]
             my_team = state.my_team
-            roster_counts = state.my_roster_counts(self.position_of)
+            # Resolved once: `position_of` rebuilds a dict over every valued player on each
+            # access, and the comprehensions below would otherwise rebuild it per row.
+            position_of = self.position_of
+            roster_counts = state.my_roster_counts(position_of)
             my_keepers = (
                 [
                     {
                         "player": self._player_name(keeper.player_key),
-                        "position": self.position_of.get(keeper.player_key, "?"),
+                        "position": position_of.get(keeper.player_key, "?"),
                         "cost": keeper.cost,
                         "source": keeper.source,
                     }
@@ -277,7 +303,7 @@ class Assistant:
                     {
                         "pick": pick.pick,
                         "player": self._player_name(pick.player_key),
-                        "position": self.position_of.get(pick.player_key, "?"),
+                        "position": position_of.get(pick.player_key, "?"),
                     }
                     for pick in state.picks_by_team(my_team.team_key)
                 ]

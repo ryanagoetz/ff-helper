@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import threading
+import time
 import webbrowser
 from pathlib import Path
 
@@ -193,11 +194,26 @@ def bootstrap(
     # Keepers must be resolved before the assistant is built: they change the player pool,
     # the roster counts, the budgets and the number of rounds.
     registry = PlayerRegistry(snapshot.players)
-    rostered: list = []
-    if league.draft_status == "predraft":
-        # Only meaningful pre-draft. Once picks start, a rostered player may simply have
-        # been drafted, and treating those as keepers would double-count them.
-        rostered = client.keepers(teams)
+    startup_notes: list[str] = []
+
+    if league.draft_status != "predraft":
+        # Restarting after the draft has opened is the normal recovery path here (crash,
+        # reboot, a stalled feed), and it must not cost us the keepers -- they would go
+        # straight back into the pool and be recommended for the rest of the draft. Seed
+        # the board *first* so that players already drafted are recognised as picks rather
+        # than mistaken for keepers; DraftState then resolves the overlap in favour of the
+        # board.
+        try:
+            state.apply_sync(client.draft_results(league_key), timestamp=time.time())
+        except Exception as exc:  # noqa: BLE001 - a missing board is not fatal here
+            startup_notes.append(f"Could not read the draft board before keepers ({exc})")
+
+    rostered, roster_failures = client.keepers(teams)
+    if roster_failures:
+        startup_notes.append(
+            f"Could not read {len(roster_failures)} of {len(teams)} rosters, so any keepers "
+            f"they hold are still in the pool: {'; '.join(roster_failures)}"
+        )
     try:
         keeper_set = keepers.resolve(rostered, teams, registry, keeper_csv)
     except keepers.KeeperError as exc:
@@ -206,6 +222,7 @@ def bootstrap(
     state.apply_keepers(keeper_set.kept)
     assistant = Assistant.build(league, state, snapshot, lock=lock)
     assistant.notes.extend(keeper_set.notes)
+    assistant.notes.extend(startup_notes)
 
     sync = DraftSync(client, state, interval=settings.poll_interval, lock=lock)
     return assistant, sync

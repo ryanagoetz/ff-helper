@@ -237,17 +237,22 @@ def parse_draft_results(payload: dict) -> list[DraftPick]:
     return sorted(picks)
 
 
-def _find_players_collection(node: Any) -> Any:
+def _find_players_collection(node: Any, depth: int = 3) -> Any:
     """Locate the ``players`` collection inside a node that may bury it a level down.
 
     A roster wraps it as ``{"0": {"players": {...}}, "coverage_type": "week"}``, which is
-    one level deeper than every other endpoint puts it, so a plain flatten misses it.
+    one level deeper than every other endpoint puts it, so a plain flatten misses it. The
+    roster itself also arrives as a list of fragments in some responses, which puts the
+    numeric wrapper another level down again -- hence the bounded recursion rather than a
+    single hop, since stopping early here returns no keepers at all and says nothing.
     """
+    if node is None or depth < 0:
+        return None
     direct = unwrap(node, "players")
     if direct is not None:
         return direct
     for item in collection_items(node):
-        found = unwrap(item, "players")
+        found = _find_players_collection(item, depth - 1)
         if found is not None:
             return found
     return None
@@ -271,12 +276,16 @@ def parse_roster(payload: dict, team_key: str) -> list[KeptPlayer]:
             continue
 
         # Yahoo sometimes attaches keeper metadata; take the cost when it is there.
+        # Non-keepers carry `is_keeper: {"status": false, "cost": false, "kept": false}`,
+        # and `false` would numify to 0 -- a $0 salary is a real auction price, so it must
+        # not stand in for "Yahoo told us nothing".
         keeper_flat = flatten(flat.get("is_keeper")) if flat.get("is_keeper") else {}
+        raw_cost = keeper_flat.get("cost")
         kept.append(
             KeptPlayer(
                 player_key=player_key,
                 team_key=team_key,
-                cost=_to_int(keeper_flat.get("cost")),
+                cost=None if isinstance(raw_cost, bool) else _to_int(raw_cost),
                 source="yahoo",
             )
         )

@@ -101,6 +101,7 @@
   <div class="stats" id="auctionStats"></div>
 </div>
 <div id="alerts"></div>
+<div class="muted" id="notes" style="margin-bottom:14px"></div>
 
 <div class="grid">
   <div>
@@ -213,10 +214,18 @@ function renderState(s) {
   (s.superseded || []).forEach(m => alerts.push(m));
   $("alerts").innerHTML = alerts.map(a => `<div class="alert">${a}</div>`).join("");
 
+  // Startup notes -- keeper counts and sources, unmatched players, uneven-keeper
+  // warnings, rosters that failed to load. These were terminal-only, which is the wrong
+  // place: on draft day you are looking at this page, and the notes are exactly what
+  // tells you the keeper list is incomplete. Muted rather than alert-styled, since most
+  // of them are informational.
+  $("notes").innerHTML = (s.notes || [])
+    .map(n => `<div>${n}</div>`).join("");
+
   // Keepers first: they are already yours, and seeing them is how you confirm the app
   // actually knows about them rather than silently leaving them in the pool.
   const keeperRows = (s.my_keepers || []).map(k =>
-    `<tr><td class="num muted">${k.cost ? "$" + k.cost : "kept"}</td><td>${posTag(k.position)}</td>
+    `<tr><td class="num muted">${k.cost == null ? "kept" : "$" + k.cost}</td><td>${posTag(k.position)}</td>
      <td>${k.player} <span class="flag">keeper${k.source === "csv" ? " (csv)" : ""}</span></td></tr>`
   ).join("");
   const pickRows = (s.my_roster || []).map(r =>

@@ -238,14 +238,19 @@ class PlayerRegistry:
         return None
 
     def find_fuzzy(self, row: SourceRow) -> tuple[YahooPlayer | None, float]:
-        """Last resort: closest name above the similarity threshold, same position."""
+        """Last resort: closest name above the similarity threshold, same position.
+
+        A row with no position at all (a keeper CSV, which only has a name) searches every
+        position rather than none -- filtering on an empty position matches no player, so
+        the fallback would silently never fire.
+        """
         position = normalize_position(row.position)
         target = normalize_name(row.name)
         best: YahooPlayer | None = None
         best_score = 0.0
 
         for player in self.players:
-            if normalize_position(player.primary_position) != position:
+            if position and normalize_position(player.primary_position) != position:
                 continue
             score = SequenceMatcher(None, target, normalize_name(player.full_name)).ratio()
             if score > best_score:
