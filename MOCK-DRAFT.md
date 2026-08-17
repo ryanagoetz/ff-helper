@@ -1,12 +1,32 @@
 # Mock draft: what to do
 
-You have two separate jobs at the mock, and they are easy to confuse because only one of
-them involves the app.
+## First, how the pieces fit
 
-| | What | How long | Why it matters |
+There are two ways a sale can reach the board, and they are at different stages of ready:
+
+- **Typing**, one sale at a time on the keyboard. Works today. Right now it is the *only*
+  path known to work, so it is the one to be fluent in.
+- **Pasting** Yahoo's whole sold list in one go. Built and tested — but only against
+  sample text invented for the purpose. Nobody has seen what Yahoo's 2026 draft room
+  actually produces when you copy it, so whether it works on Saturday is unknown.
+
+That unknown is what the mock resolves. **Job A below is not a draft-day activity** — it
+is you capturing a sample of Yahoo's real output once, so the paste path can be finished
+against the real thing rather than a guess.
+
+Depending on how Job A goes, Saturday looks like one of two things:
+
+| Job A outcome | Saturday |
+|---|---|
+| The copy is clean | Paste is primary — copy the sold list every few minutes, one action catches up everything, including sales you missed. Typing drops to corrections. |
+| The copy is messy or blocked | You type all ~180 sales, and the keyboard drill is what carries you. |
+
+## The two jobs
+
+| | What | How long | Why |
 |---|---|---|---|
-| **Job A** | Copy the sold list out of Yahoo and send it to me | 5 min | Nobody has seen Yahoo's 2026 draft room. Until I see the real text, the paste parser is a guess. |
-| **Job B** | Practise entering sales in ff-helper | 20 min | On Saturday every sale is typed by you. Learn the flow before it is the only flow. |
+| **Job A** | Copy the sold list out of Yahoo and send it to me | 5 min | Decides whether pasting is possible at all. Blocking. |
+| **Job B** | Practise typing sales in ff-helper | 20 min | The path that works regardless of how Job A turns out. |
 
 **The mock is not your league.** ff-helper is configured for Bust A Move — 12 teams, your
 scoring, your team names. Do not try to make it track the mock draft; it will not match
@@ -67,7 +87,8 @@ picks up any changes without restarting anything.
 
 ### Practise typing sales — the keyboard flow
 
-This is the path that has to be automatic on Saturday. Never touch the mouse:
+Drill this whatever happens with Job A. If pasting works you will still type corrections;
+if it does not, this is the whole draft. Never touch the mouse:
 
 ```
 type a name → Enter → type the price → Enter → choose the buyer → Enter
@@ -83,7 +104,10 @@ Do fifteen or twenty. Watch **Money in room** and **Price level** move. The thin
 is the reflex, not the understanding — you want this taking ten seconds while you are
 listening to the next nomination.
 
-### Practise the paste path
+### See how the paste path behaves
+
+Not a substitute for the typing drill — this is so the behaviour is familiar if Job A
+comes back clean and pasting becomes your main path on Saturday.
 
 Paste this into the **Paste the draft room** box and click *Apply pasted board*:
 
