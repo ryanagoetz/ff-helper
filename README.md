@@ -199,10 +199,12 @@ player,pos,team,pass_yds,pass_td,int,rush_yds,rush_td,rec,rec_yds,rec_td,fum_los
 Ja'Marr Chase,WR,CIN,0,0,0,4,0,112,1408,12,1
 ```
 
-**Per-stat columns beat a points total**, because the app re-scores stats under your
-league's modifiers — that's what makes the numbers yours instead of the exporter's. A
-points-only file (`fpts`) still works and says so in the run notes. If your provider lets
-you set league scoring before exporting, do that and either shape is fine.
+**Per-stat columns are required.** The app scores stat lines under your league's
+modifiers, and deliberately discards a source's own points total — that total carries the
+exporter's scoring, which is the thing being replaced. So export *projections*, not a
+rankings table: a file with a points column and no stats is rejected, because it would
+otherwise produce a board where every player is worth 0.0 and ranking quietly falls back
+to ADP.
 
 Put exports in `data/`, named for the league they belong to, and no flag is needed:
 
@@ -213,13 +215,10 @@ data/projections-461.l.222222.csv     # auction league
 
 `data/projections.csv` is the fallback when no league-specific file exists.
 
-**Name the file for its league if your export is points-only.** A points total has
-already been scored under whichever league's settings were active when you exported it,
-and there is nothing left for the app to re-score. Loading the snake league's file into
-the auction league then produces a full board of plausible numbers computed under the
-wrong rules, which no coverage check can detect. `fetch_rankings.py` warns when it falls
-back to a shared file carrying pre-scored points, and records which file it used in the
-snapshot notes. Per-stat exports are immune to this and can be shared across leagues.
+**One per-stat file serves every league**, because scoring happens here rather than at
+export time — so `data/projections.csv` is the normal case and the per-league names are
+only needed if you have a reason to give a league its own file. `fetch_rankings.py`
+records which file it used in the snapshot notes.
 
 Everything in `data/` is gitignored except its README — a subscriber export is not yours
 to redistribute.

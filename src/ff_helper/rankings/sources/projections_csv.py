@@ -10,11 +10,13 @@ most of its competitors) let a subscriber export them, and an export you downloa
 before draft day involves no credentials in this app, no scraper to rot, and no terms to
 argue about -- it is your data, from your subscription.
 
-**Per-stat columns are strongly preferred over a points total.** The app re-scores stats
-under your league's own modifiers, which is what makes the value numbers yours rather than
-inherited from whatever scoring the exporter assumed. A points-only file still works and
-is better than nothing, but it silently imports someone else's scoring assumptions. If
-your provider lets you set league scoring before exporting, do that.
+**Per-stat columns are required, not preferred.** The app re-scores stats under your
+league's own modifiers, which is what makes the value numbers yours rather than inherited
+from whatever scoring the exporter assumed -- and ``rankings/blend.py`` discards a
+source's own point total for exactly that reason. So a rankings table carrying only a
+points column contributes nothing at all: every player falls through to interpolation,
+every position reports "no stat projections available", and the board comes back 0.0 and
+ranked by ADP. That is rejected here rather than allowed to look like data.
 
 Unlike the keeper CSV, an unmatched name here is *not* a hard error. A keeper that fails
 to load leaves a player in the pool who is not really available, which corrupts the draft;
@@ -216,6 +218,14 @@ def load(path: Path, *, source: str = SOURCE) -> list[SourceRow]:
                 problems.append(f"line {line_number} ({name}): {exc}")
                 continue
 
+            # A row whose every stat is zero is not a projection of nothing, it is a
+            # player this export does not project in scoreable categories -- kickers
+            # carry FG and XP columns the scoring engine has no stat IDs for, so their
+            # skill-stat cells are all zero. Keeping the zeros would score them as a real
+            # 0.0 and suppress the interpolation that is supposed to rank them.
+            if stats and not any(stats.values()):
+                stats = {}
+
             if not stats and points is None:
                 problems.append(f"line {line_number} ({name}): no stats and no points")
                 continue
@@ -247,6 +257,21 @@ def load(path: Path, *, source: str = SOURCE) -> list[SourceRow]:
             f"{path} could not be fully read:\n  "
             + "\n  ".join(problems[:20])
             + (f"\n  ... and {len(problems) - 20} more" if len(problems) > 20 else "")
+        )
+
+    if rows and not any(row.stats for row in rows):
+        # Not a soft degradation. rankings/blend.py deliberately discards a source's own
+        # point total, so a file with no stat lines contributes nothing: every player
+        # falls through to _fill_missing_points, every position reports "no stat
+        # projections available", and the whole board comes back 0.0 and ranked by ADP.
+        # An error here beats a plausible-looking board with no values behind it.
+        raise ProjectionsError(
+            f"{path} has points but no per-stat columns, and per-stat columns are what "
+            "the app scores. A points total is discarded on purpose, because it carries "
+            "the exporter's scoring rather than your league's -- so this file would "
+            "produce a board where every player is worth 0.0 and ranking falls back to "
+            "ADP.\nExport projections with stat columns (passing yards, receptions, "
+            "rushing TDs, and so on) rather than a rankings table."
         )
 
     if len(rows) < MIN_ROWS:

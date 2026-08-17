@@ -4,39 +4,45 @@ Projection exports and keeper files live here. Everything except this README and
 `.gitkeep` is gitignored — a subscriber export is not ours to redistribute, and the repo
 is public.
 
-## Naming
+## The normal case: one file
 
-Name each projections file for the league it belongs to:
-
-```
-data/projections-461.l.111111.csv     # snake league
-data/projections-461.l.222222.csv     # auction league
-```
-
-`fetch_rankings.py` picks these up automatically, so neither league needs a flag:
+`data/projections.csv` serves every league. Scoring happens in the app, under each
+league's own modifiers, so the same stat lines are correct for a snake league and an
+auction league at once:
 
 ```bash
 uv run python scripts/fetch_rankings.py --league 461.l.111111
 uv run python scripts/fetch_rankings.py --league 461.l.222222
 ```
 
-`data/projections.csv` is the fallback when no league-specific file exists. Use it only
-if you play in one league, or if your exports carry per-stat columns.
+## Export projections, not rankings
 
-## Why the naming matters
+**The file must carry per-stat columns** — passing yards, receptions, rushing TDs, and so
+on. A rankings table with a points total and no stats is rejected on load.
 
-**An export carrying only a points total has already been scored**, under whichever
-league's settings were active when you exported it. The app re-scores per-stat lines
-under your league's modifiers, but there is nothing to re-score in a points-only file —
-it arrives finished.
+That is not fussiness. `rankings/blend.py` discards a source's own points total on
+purpose, because the total was computed under the exporter's scoring rather than yours.
+A points-only file therefore contributes nothing: every player falls through to
+interpolation, every position reports "no stat projections available", and the board
+comes back 0.0 with ranking silently reverting to ADP.
 
-That makes a mixed-up file the worst kind of wrong. Snake-scored points loaded into an
-auction league produce a full board of plausible numbers, every one of them computed
-under the wrong rules, and no coverage check or crosswalk can detect it. Naming the file
-for its league is what makes that mistake impossible rather than merely unlikely.
+Providers usually offer both reports. From 4for4, the projections export is the one with
+`Pass Yds` / `Rec` / `Rush TD` columns, not the one with `FF Pts` and `VOR`.
 
-`fetch_rankings.py` warns when it falls back to a shared file that carries pre-scored
-points, and records which file it used in the snapshot notes.
+## Giving a league its own file
 
-Per-stat exports do not have this problem — they get scored under whatever league you
-point them at, so one file serves both leagues correctly.
+Only needed if a league should use different projections:
+
+```
+data/projections-461.l.111111.csv
+```
+
+A league-specific file wins over `projections.csv`, and a league without one does not
+borrow another league's.
+
+## Kickers and defenses
+
+Kicker rows come through with zeroes across every scoreable column, because `FG` and `XP`
+have no Yahoo stat IDs the engine can score. Those rows are treated as unprojected and
+ranked by consensus instead — which is the intended behaviour, not a gap. Defenses are
+usually absent from projection exports entirely and get the same treatment.

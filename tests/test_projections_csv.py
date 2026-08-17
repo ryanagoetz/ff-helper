@@ -61,41 +61,97 @@ class TestParsing:
         assert rows[0].stats["rec"] == 40
         assert rows[0].stats["fum_lost"] == 1
 
-    def test_reads_a_4for4_rankings_export(self, tmp_path):
-        """Shaped like the real export: quoted headers, "FF Pts", no plain position column.
+    def test_reads_the_real_4for4_projections_export(self, tmp_path):
+        """The exact header of 4for4's per-stat projections export.
 
-        4for4 encodes position inside "Position-Rank" as "RB-01", and spells the total
-        "FF Pts" rather than "FPTS". Both were misses on the first pass.
+        Spellings that were misses on the first pass: "FF Pts" for the total, "Fum" for
+        fumbles lost, and stat names separated by spaces rather than underscores.
         """
+        header = (
+            "PID,Player,Pos,Team,FF Pts,ADP,Pass Comp,Pass Att,Pass Yds,Pass TD,INT,"
+            "Rush Att,Rush Yds,Rush TD,Rec,Rec Yds,Rec TD,BYE,Pa1D,Ru1D,Rec1D,Fum,XP,FG"
+        )
+        body = "\n".join(
+            f"play{i},Player{i},QB,BUF,345.1,28,311.3,458.5,{3670 - i},24.5,8.7,"
+            f"96.6,505.4,10.1,0,0,0,7,176.5,32.9,0,2.6,0,0"
+            for i in range(MIN_ROWS)
+        )
+        rows = load(_write(tmp_path, f"{header}\n{body}"))
+        assert len(rows) == MIN_ROWS
+        assert rows[0].position == "QB"
+        assert rows[0].team == "BUF"
+        assert rows[0].stats["pass_yds"] == 3670
+        assert rows[0].stats["fum_lost"] == 2.6
+        assert rows[0].projected_points == 345.1
+
+    def test_position_rank_only_supplies_the_position(self, tmp_path):
+        header = "player,position-rank,rec_yds"
+        body = "\n".join(f"Player{i},WR-{i + 1:02d},{1200 - i}" for i in range(MIN_ROWS))
+        rows = load(_write(tmp_path, f"{header}\n{body}"))
+        assert {row.position for row in rows} == {"WR"}
+
+    def test_a_plain_position_column_wins_over_the_rank(self, tmp_path):
+        header = "player,pos,position-rank,rec_yds"
+        body = "\n".join(f"Player{i},TE,WR-{i + 1:02d},{800 - i}" for i in range(MIN_ROWS))
+        rows = load(_write(tmp_path, f"{header}\n{body}"))
+        assert {row.position for row in rows} == {"TE"}
+
+    def test_all_zero_stat_line_falls_through_to_interpolation(self, tmp_path):
+        """Kickers carry FG and XP, which the engine cannot score, and zeros elsewhere.
+
+        Keeping the zeros would score them as a genuine 0.0 and suppress the
+        interpolation that is supposed to rank them by consensus.
+        """
+        header = HEADER + ",fpts"
+        body = "\n".join(
+            f"Player{i},RB,CIN,0,0,0,{900 - i},8,40,300,2,1,250" for i in range(MIN_ROWS)
+        )
+        # Shaped like a real kicker row: zeros across every scoreable column, but a
+        # points total, because the export scores FG and XP that the engine cannot.
+        kicker = "\nKicker Guy,K,DAL,0,0,0,0,0,0,0,0,0,158.1"
+        rows = load(_write(tmp_path, f"{header}\n{body}{kicker}"))
+        by_name = {row.name: row for row in rows}
+        assert by_name["Kicker Guy"].stats == {}
+        assert by_name["Kicker Guy"].projected_points == 158.1
+        assert by_name["Player0"].stats["rush_yds"] == 900
+
+
+class TestPointsOnlyIsRejected:
+    """blend.py discards a source's own point total, so such a file is worth nothing.
+
+    This was briefly documented as a working fallback. It is not: it yields a board where
+    every player is 0.0 and ranking silently reverts to ADP.
+    """
+
+    def test_points_only_file_is_rejected(self, tmp_path):
+        header = "player,pos,fpts"
+        body = "\n".join(f"Player{i},RB,{300 - i}" for i in range(MIN_ROWS))
+        with pytest.raises(ProjectionsError, match="no per-stat columns"):
+            load(_write(tmp_path, f"{header}\n{body}"))
+
+    def test_the_error_says_what_to_export_instead(self, tmp_path):
+        header = "player,pos,ff_pts"
+        body = "\n".join(f"Player{i},RB,{300 - i}" for i in range(MIN_ROWS))
+        with pytest.raises(ProjectionsError, match="stat columns"):
+            load(_write(tmp_path, f"{header}\n{body}"))
+
+    def test_the_4for4_rankings_export_shape_is_rejected(self, tmp_path):
+        """The wrong 4for4 report: a rankings table, points-only, no stats to score."""
         header = '"Rank","Player","Team","BYE","Position-Rank","FF Pts","VOR","ADP ( Average )"'
         body = "\n".join(
             f'"{i + 1}","Player{i}","DET","6","RB-{i + 1:02d}","{276.7 - i}","160","{i + 1}"'
             for i in range(MIN_ROWS)
         )
-        rows = load(_write(tmp_path, f"{header}\n{body}"))
-        assert len(rows) == MIN_ROWS
-        assert rows[0].position == "RB"
-        assert rows[0].team == "DET"
-        assert rows[0].projected_points == 276.7
+        with pytest.raises(ProjectionsError, match="no per-stat columns"):
+            load(_write(tmp_path, f"{header}\n{body}"))
 
-    def test_position_rank_only_supplies_the_position(self, tmp_path):
-        header = "player,position-rank,fpts"
-        body = "\n".join(f"Player{i},WR-{i + 1:02d},{200 - i}" for i in range(MIN_ROWS))
+    def test_a_file_with_any_stat_lines_is_still_accepted(self, tmp_path):
+        """Mixed files are fine -- only a total absence of stats is fatal."""
+        header = "player,pos,fpts,rush_yds"
+        body = "\n".join(f"Player{i},RB,{300 - i},{900 - i}" for i in range(MIN_ROWS))
         rows = load(_write(tmp_path, f"{header}\n{body}"))
-        assert {row.position for row in rows} == {"WR"}
-
-    def test_a_plain_position_column_wins_over_the_rank(self, tmp_path):
-        header = "player,pos,position-rank,fpts"
-        body = "\n".join(f"Player{i},TE,WR-{i + 1:02d},{200 - i}" for i in range(MIN_ROWS))
-        rows = load(_write(tmp_path, f"{header}\n{body}"))
-        assert {row.position for row in rows} == {"TE"}
-
-    def test_points_only_file_is_accepted(self, tmp_path):
-        header = "player,pos,fpts"
-        body = "\n".join(f"Player{i},RB,{300 - i}" for i in range(MIN_ROWS))
-        rows = load(_write(tmp_path, f"{header}\n{body}"))
+        assert rows[0].stats["rush_yds"] == 900
         assert rows[0].projected_points == 300
-        assert rows[0].stats == {}
 
     def test_blank_lines_are_skipped(self, tmp_path):
         rows = load(_write(tmp_path, _full_file() + "\n\n\n"))
