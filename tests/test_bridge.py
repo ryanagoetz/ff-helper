@@ -365,3 +365,35 @@ class _TwoCandidates:
 
     def find_fuzzy(self, row):
         return None, 0.0
+
+
+class TestWholePageNoise:
+    """The reader sends innerText, not a tidy copy, so records must survive surroundings.
+
+    This is what makes the userscript viable without understanding Yahoo's DOM: grab a
+    bigger blob than necessary and let the parser discard what is not a sale.
+    """
+
+    def _blob(self) -> str:
+        fixture = (FIXTURES / "yahoo_draft_results.txt").read_text(encoding="utf-8")
+        before = "Yahoo Fantasy\nDraft Room\n0:47\nNominate\n$1\nAuction Budget\n200\n"
+        after = "\nChat\nDerek: nice pick\n23\nShazad: ugh\nQueue\nWatch List\n"
+        return before + fixture + after
+
+    def test_page_furniture_does_not_become_sales(self):
+        sales = parse_paste(self._blob())
+        assert len(sales) == 16
+
+    def test_the_final_sale_keeps_its_price(self):
+        """It used to absorb whatever followed it and lose the price line."""
+        sales = {sale.line: sale for sale in parse_paste(self._blob())}
+        assert sales[1].name == "J. Gibbs"
+        assert sales[1].cost == 74
+        assert sales[1].buyer == "Team 11"
+
+    def test_a_stray_number_in_chat_does_not_start_a_sale(self):
+        names = {sale.name for sale in parse_paste(self._blob())}
+        assert not any(":" in name for name in names)
+
+    def test_a_number_with_no_price_after_it_is_ignored(self):
+        assert parse_paste("7\nSome Heading\nMore Text\nAnd More\n") == []

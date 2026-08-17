@@ -73,6 +73,14 @@ def _serialize(pick, is_auction: bool) -> dict:
 
 class PastedBoard(BaseModel):
     text: str
+    # A human pasting is standing there and can fix a bad row, so the default refuses the
+    # whole thing and says why. An unattended reader cannot, and would stall for the rest
+    # of the draft over one unmatchable name -- so it may proceed with what resolved.
+    #
+    # The asymmetry that survives either way: an unresolved *buyer* always blocks. Money
+    # charged to no team never leaves the room, so it does not make the board stale, it
+    # makes every price it quotes wrong.
+    strict: bool = True
 
 
 def _resolution_failure(report: bridge.ResolutionReport) -> str:
@@ -228,8 +236,17 @@ def create_app(assistant: Assistant, sync: DraftSync | None) -> FastAPI:
 
         report = _resolver().resolve_all(sales, is_auction=assistant.is_auction)
 
-        if not report.ok:
+        blocking = bool(report.unknown_buyers) or (
+            body.strict and (report.unknown_players or report.missing_price)
+        )
+        if blocking:
             raise HTTPException(status_code=422, detail=_resolution_failure(report))
+        if not report.resolved:
+            raise HTTPException(
+                status_code=422,
+                detail="Nothing in that reading resolved to a player. "
+                + _resolution_failure(report),
+            )
 
         with assistant.lock:
             diff = assistant.state.apply_bridge(
@@ -245,6 +262,14 @@ def create_app(assistant: Assistant, sync: DraftSync | None) -> FastAPI:
 
         return {
             "read": len(sales),
+            "skipped": [
+                {"name": sale.name, "why": why}
+                for why, group in (
+                    ("no matching player", report.unknown_players),
+                    ("no price", report.missing_price),
+                )
+                for sale in group
+            ],
             "applied": len(diff.applied),
             "corrected": len(diff.corrected),
             "removed": len(diff.removed),

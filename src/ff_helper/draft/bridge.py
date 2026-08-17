@@ -223,6 +223,10 @@ _BYE_LINE = re.compile(r"^bye\b", re.IGNORECASE)
 _ROUND_LINE = re.compile(r"^round\s+\d+\s*$", re.IGNORECASE)
 _PRICE_LINE = re.compile(r"^\$\s*(\d{1,4})$")
 
+# A sale record is name, name, [flag], position, team, bye, buyer, price. A generous
+# ceiling on that, so a stray number on the page cannot swallow half the document.
+_MAX_RECORD_LINES = 12
+
 # Yahoo labels the reader's own team this way rather than by name.
 YOUR_TEAM = "your team"
 
@@ -240,8 +244,25 @@ def parse_yahoo_results(text: str) -> list[RawSale]:
 
     sales: list[RawSale] = []
     for position, start in enumerate(starts):
-        end = starts[position + 1] if position + 1 < len(starts) else len(lines)
-        block = [line for line in lines[start + 1 : end] if line and not _ROUND_LINE.match(line)]
+        limit = starts[position + 1] if position + 1 < len(starts) else len(lines)
+        # A record ends at its price, not at the next pick number. Reading to the next
+        # pick number lets whatever follows the last sale -- chat, nav, a watch list --
+        # be absorbed into it, which cost the final sale its price. It also means a bare
+        # number loose on the page starts a record that never closes: requiring a price
+        # inside a short window discards those instead of inventing a sale from chatter.
+        block: list[str] = []
+        for line in lines[start + 1 : min(limit, start + 1 + _MAX_RECORD_LINES)]:
+            if not line or _ROUND_LINE.match(line):
+                continue
+            block.append(line)
+            if _PRICE_LINE.match(line):
+                break
+        else:
+            continue  # no price found: not a sale.
+
+        if not _PRICE_LINE.match(block[-1]):
+            continue
+
         sale = _from_yahoo_block(int(lines[start]), block)
         if sale is not None:
             sales.append(sale)
