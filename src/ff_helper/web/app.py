@@ -13,11 +13,12 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
+from urllib.parse import urlparse
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from ff_helper import offline
@@ -36,6 +37,10 @@ STATIC_DIR = Path(__file__).parent / "static"
 # The one origin the draft-room reader can run from. Not "*": this endpoint moves money
 # around a live draft board, and a wildcard would let any page you have open write to it.
 YAHOO_ORIGIN = "https://football.fantasysports.yahoo.com"
+
+# Hostnames that are this app itself. Compared as parsed hostnames, not string
+# prefixes -- "localhost.evil.example" starts with "localhost".
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 def _serialize(pick, is_auction: bool) -> dict:
@@ -116,6 +121,10 @@ def _resolution_failure(report: bridge.ResolutionReport) -> str:
     return " ".join(problems)
 
 
+class RemovePlayer(BaseModel):
+    player_key: str
+
+
 class ManualPick(BaseModel):
     player_key: str
     pick: int | None = None
@@ -158,6 +167,27 @@ def create_app(
                 )
             )
         return cached[0]
+
+    @app.middleware("http")
+    async def gate_external_origins(request: Request, call_next):
+        """Anything not from this app's own page must present the bridge token.
+
+        Applied as middleware rather than per route because CORSMiddleware grants the
+        Yahoo origin access to *every* endpoint. Checking only the paste route left
+        /api/undo and /api/pick writable, and the whole board readable, by any script on
+        that host -- an ad frame, a Yahoo widget, an XSS.
+        """
+        origin = request.headers.get("origin", "")
+        external = bool(origin) and urlparse(origin).hostname not in LOCAL_HOSTS
+        if external and request.headers.get("x-bridge-token") != (bridge_token or "\0"):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": "Bad or missing bridge token. Start ff-helper with "
+                    "--bridge and copy the token it prints into the reader script."
+                },
+            )
+        return await call_next(request)
 
     @app.get("/")
     def index() -> FileResponse:
@@ -267,22 +297,6 @@ def create_app(
         looking at the result, so refusing with a specific complaint is more useful than
         applying nine of ten sales and burying the tenth in a notes list.
         """
-        # A request carrying an Origin that is not this app's own page came from the
-        # draft room, and must present the token printed at startup. The app's own UI is
-        # same-origin and needs nothing.
-        origin = request.headers.get("origin", "")
-        external = bool(origin) and not origin.startswith(
-            ("http://127.0.0.1", "http://localhost")
-        )
-        if external and (
-            not bridge_token or request.headers.get("x-bridge-token") != bridge_token
-        ):
-            raise HTTPException(
-                status_code=401,
-                detail="Bad or missing bridge token. Start ff-helper with --bridge and "
-                "copy the token it prints into the reader script.",
-            )
-
         sales = bridge.parse_paste(body.text)
         if not sales:
             raise HTTPException(
@@ -305,14 +319,32 @@ def create_app(
                 + _resolution_failure(report),
             )
 
+        # A row that failed to resolve is absent from `resolved`, which is
+        # indistinguishable from a sale that vanished -- so removals are only safe when
+        # the reading was complete. Otherwise a transient parse failure refunds real money.
+        complete = not (report.unknown_players or report.missing_price or report.unknown_buyers)
         with assistant.lock:
             diff = assistant.state.apply_bridge(
                 [
-                    BridgeSale(player_key=key, team_key=team, cost=sale.cost)
+                    BridgeSale(
+                        player_key=key, team_key=team, cost=sale.cost, pick=sale.line or None
+                    )
                     for sale, key, team in report.resolved
                 ],
                 timestamp=time.time(),
+                allow_removals=complete,
             )
+            # Anything the reading could not place is recorded where the board shows it.
+            # Reported only in the response, it reached the reader's badge on the Yahoo
+            # tab and never the person looking at ff-helper, who would go on being
+            # recommended a player sold ten minutes ago.
+            unplaced = report.unknown_players + report.missing_price
+            if unplaced:
+                assistant.state.unresolved = {
+                    sale.name: (sale.buyer, sale.cost) for sale in unplaced
+                }
+            elif not body.strict:
+                assistant.state.unresolved = {}
 
         if diff.rejected:
             raise HTTPException(status_code=409, detail=diff.rejected)
@@ -349,6 +381,20 @@ def create_app(
         if entry is None:
             raise HTTPException(status_code=400, detail="No manual picks to undo")
         return {"pick": entry.pick, "player_key": entry.player_key}
+
+    @app.post("/api/board/remove")
+    def remove(body: RemovePlayer) -> dict:
+        """Take a player off the board whoever put him there.
+
+        Undo reaches only hand-entered picks, so a sale the reader resolved to the wrong
+        player -- the price-guess path can -- had no way back off, and the duplicate guard
+        then refused to record the right one. This is that way back.
+        """
+        with assistant.lock:
+            entry = assistant.state.remove_player(body.player_key)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="That player is not on the board.")
+        return {"pick": entry.pick, "player_key": entry.player_key, "cost": entry.cost}
 
     return app
 

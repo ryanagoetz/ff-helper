@@ -161,6 +161,14 @@ def load_config(path: Path) -> OfflineLeague:
         str(alias): str(target)
         for alias, target in (config.get("team_aliases") or {}).items()
     }
+    known = {team.name.strip().lower() for team in teams}
+    unknown = [t for t in aliases.values() if t.strip().lower() not in known]
+    if unknown:
+        raise OfflineConfigError(
+            f"{path}: team_aliases points at teams that do not exist: "
+            f"{', '.join(sorted(unknown))}. This is the one setting that exists to stop a "
+            "buyer going unresolved, so a typo in it cannot be ignored."
+        )
     return OfflineLeague(
         league=league,
         teams=teams,

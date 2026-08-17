@@ -28,6 +28,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
+from ff_helper.engine.auction import MIN_BID
 from ff_helper.rankings.players import PlayerRegistry, SourceRow
 from ff_helper.yahoo.models import Team
 
@@ -74,10 +75,6 @@ class ResolutionReport:
     # correctly; only that rival's own budget is a guess.
     assigned_buyers: list[tuple[str, str]] = field(default_factory=list)
 
-    @property
-    def ok(self) -> bool:
-        return not (self.unknown_players or self.unknown_buyers or self.missing_price)
-
 
 class BridgeResolver:
     """Names to keys, memoized.
@@ -100,7 +97,7 @@ class BridgeResolver:
         self.registry = registry
         self.teams = teams
         self.values = values or {}
-        self._players: dict[tuple[str, str], str | None] = {}
+        self._players: dict[tuple[str, str], tuple[str | None, str]] = {}
         # Buyer names with no matching team, given a free slot so their money still
         # leaves the room. Remembered, so the same name keeps the same slot.
         self._assigned: dict[str, str] = {}
@@ -128,9 +125,16 @@ class BridgeResolver:
         not in genuine doubt. Where price settles it, that is reported as an assumption
         rather than passed off as a match.
         """
-        cache_key = (_fold(sale.name), sale.team_abbr.upper(), sale.cost or 0)
+        # Team and position are the identity here; the price is evidence, not identity.
+        # Keying on cost too meant a live nomination -- whose bid ticks upward in the page
+        # text the readers scrape -- minted a fresh entry per increment, so the negative
+        # caching this class exists for never fired on the one row that keeps changing.
+        cache_key = (_fold(sale.name), sale.team_abbr.upper())
         if cache_key in self._players:
-            return self._players[cache_key], "cached"
+            # Replay the original provenance. Returning "cached" made resolve_all stop
+            # recording fuzzy and priced matches after the first reading, which silently
+            # retired the warning that a guess had been made.
+            return self._players[cache_key]
 
         row = SourceRow(
             name=sale.name, position=sale.position, team=sale.team_abbr, source="bridge"
@@ -143,10 +147,14 @@ class BridgeResolver:
             if len(options) == 1:
                 player, how = options[0], "exact"
             elif len(options) > 1 and sale.cost is not None and self.values:
+                # Default to MIN_BID, matching DollarValues.value_of. Defaulting to 0.0
+                # made an unprojected candidate the nearest match for every cheap sale,
+                # charging the money to him and leaving the real player on the board.
                 player = min(
                     options,
                     key=lambda candidate: abs(
-                        self.values.get(candidate.player_key, 0.0) - float(sale.cost)
+                        self.values.get(candidate.player_key, float(MIN_BID))
+                        - float(sale.cost)
                     ),
                 )
                 how = "priced"
@@ -156,7 +164,11 @@ class BridgeResolver:
             how = "fuzzy" if player else ""
 
         key = player.player_key if player else None
-        self._players[cache_key] = key
+        if how != "priced":
+            # A priced match is an answer about this sale, not about this name: the same
+            # abbreviation at a different price is a different player. Caching it would
+            # replay one guess over every later sale of that name.
+            self._players[cache_key] = (key, how)
         return key, how
 
     def resolve_team(self, buyer: str) -> tuple[str | None, str]:
@@ -192,9 +204,6 @@ class BridgeResolver:
         taken = set(self._assigned.values())
         for team in self.teams:
             if team.is_mine or team.team_key in taken:
-                continue
-            # A slot whose own name has already been matched belongs to that name.
-            if self._by_team_name.get(_fold(team.name)) in taken:
                 continue
             self._assigned[folded] = team.team_key
             return team.team_key, "assigned"
@@ -247,7 +256,8 @@ def _fold(value: str) -> str:
         if unicodedata.category(character) not in {"So", "Sk", "Cf", "Co"}
     )
     cleaned = re.sub(r"\s+", " ", cleaned)
-    return cleaned.strip()
+    # A trailing run of dots is truncation, not part of the name.
+    return cleaned.strip().rstrip(".").strip()
 
 
 # Yahoo's draft-results panel copies out one record per sale, across several lines:
@@ -424,7 +434,12 @@ def _from_fields(fields: list[str], number: int) -> RawSale | None:
     position = ""
     team_abbr = ""
     remaining: list[str] = []
-    for value in rest:
+    # The buyer is the last field, and is never a position or an NFL team however it is
+    # spelled. Without holding it back, a short team name -- "TNT", "Bums", "Kev" -- was
+    # eaten as an abbreviation and the sale arrived with a blank buyer, which then failed
+    # to resolve and refused the whole paste.
+    buyer = rest[-1] if rest else ""
+    for value in rest[:-1]:
         token = value.strip().upper()
         if not position and token in _POSITIONS:
             position = token
@@ -433,11 +448,11 @@ def _from_fields(fields: list[str], number: int) -> RawSale | None:
         else:
             remaining.append(value)
 
-    cost = int(fields[money_at].replace("$", "").replace(",", "")) if money_at else None
+    cost = int(fields[money_at].replace("$", "").replace(",", "")) if money_at is not None else None
     return RawSale(
         name=name,
         cost=cost,
-        buyer=remaining[-1] if remaining else "",
+        buyer=buyer,
         position=position,
         team_abbr=team_abbr,
         line=number,

@@ -13,7 +13,7 @@ happened, but a manual entry is never silently discarded: it is superseded and r
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ff_helper.yahoo.models import DraftPick, KeptPlayer, League, Team
 
@@ -31,6 +31,11 @@ class BridgeSale:
     player_key: str
     team_key: str
     cost: int | None = None
+    # The draft room's own pick number, when the reading carried one. Using it rather
+    # than a synthetic ordinal keeps the bridge in the same numbering space as the Yahoo
+    # feed, so the two agree about a sale instead of shadowing each other -- and it makes
+    # "recent picks" and round labels mean what they say.
+    pick: int | None = None
 
 
 @dataclass
@@ -112,6 +117,14 @@ class DraftState:
     last_sync: float | None = None
     last_sync_error: str | None = None
     superseded: list[str] = field(default_factory=list)
+    # Pick numbers in the order they were entered by hand. max(manual) used to stand in
+    # for "most recent" because the old default counted upward; next_free_pick fills
+    # holes, so undo would have removed an earlier, correct entry instead.
+    manual_order: list[int] = field(default_factory=list)
+    # Sales a reading saw but could not place, by player name. Kept on the board rather
+    # than only in the response, because the response goes to the reader's badge on the
+    # Yahoo tab and the person deciding what to bid is looking at ff-helper.
+    unresolved: dict[str, tuple[str, int | None]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.roster_size:
@@ -369,10 +382,34 @@ class DraftState:
 
     # -- writers -----------------------------------------------------------------------
 
+    def drop_player(self, player_key: str, *, keep: str = "") -> list[str]:
+        """Remove a player from every writer except ``keep``. Returns what it removed.
+
+        Dedup has to be by player, not by pick number. The writers number their picks
+        independently -- Yahoo by its own draft order, the bridge by the order it first
+        saw a sale -- so the same player routinely sits at two different numbers, and
+        ``spent`` sums the board without deduplicating, charging his buyer twice.
+        """
+        removed: list[str] = []
+        for name, table in (("synced", self.synced), ("manual", self.manual),
+                            ("bridge", self.bridge)):
+            if name == keep:
+                continue
+            for number, pick in list(table.items()):
+                if pick.player_key == player_key:
+                    del table[number]
+                    removed.append(name)
+        if keep != "bridge":
+            self.bridge_order.pop(player_key, None)
+        return removed
+
     def apply_sync(self, picks: list[DraftPick], *, timestamp: float) -> list[DraftPick]:
         """Fold in what Yahoo reports. Returns picks that are new to us."""
         new_picks: list[DraftPick] = []
         for pick in picks:
+            # Yahoo is the system of record, so its number wins and every other copy of
+            # this player goes -- including one the bridge placed at a different number.
+            self.drop_player(pick.player_key, keep="synced")
             existing = self.synced.get(pick.pick)
             if existing is None or existing.player_key != pick.player_key:
                 new_picks.append(pick)
@@ -425,6 +462,9 @@ class DraftState:
             cost=cost,
         )
         self.manual[target] = entry
+        if target in self.manual_order:
+            self.manual_order.remove(target)
+        self.manual_order.append(target)
         return entry
 
     def apply_bridge(
@@ -433,6 +473,7 @@ class DraftState:
         *,
         timestamp: float,
         shrink_tolerance: int = 2,
+        allow_removals: bool = True,
     ) -> BridgeDiff:
         """Fold in a full reading of the draft room. A snapshot, not an append.
 
@@ -454,12 +495,17 @@ class DraftState:
             seen[sale.player_key] = sale
 
         removed: list[DraftPick] = []
-        gone = [key for key in self.bridge_order if key not in seen]
-        if len(gone) > shrink_tolerance:
+        gone = [key for key in self.bridge_order if key not in seen] if allow_removals else []
+        # An empty reading is never evidence that sales were undone -- early in a draft
+        # two rows can be the two most expensive players in the league, and the tolerance
+        # would have removed them and handed the money back.
+        if gone and (not sales or len(gone) > shrink_tolerance):
             return BridgeDiff(
                 rejected=(
                     f"reading dropped {len(gone)} of {len(self.bridge_order)} sales; "
                     "treating it as a failed read rather than removing them"
+                    if sales
+                    else "reading was empty; treating it as a failed read"
                 )
             )
 
@@ -470,9 +516,17 @@ class DraftState:
         for player_key, sale in seen.items():
             number = self.bridge_order.get(player_key)
             if number is None:
-                # A pick the human already entered for this player keeps its number, so
-                # the two reconcile into one entry instead of racing for a slot.
-                number = self.pick_for_player(player_key) or self.next_free_pick()
+                # `is not None`, not truthiness: pick 0 is falsy and would be discarded,
+                # allocating a second slot for a player already on the board.
+                existing = self.pick_for_player(player_key)
+                if sale.pick is not None:
+                    number = sale.pick
+                elif existing is not None:
+                    # A pick the human already entered for this player keeps its number,
+                    # so the two reconcile into one entry rather than racing for a slot.
+                    number = existing
+                else:
+                    number = self.next_free_pick()
                 self.bridge_order[player_key] = number
 
             entry = DraftPick(
@@ -484,8 +538,25 @@ class DraftState:
             )
             previous = self.bridge.get(number)
             self.bridge[number] = entry
-            # A hand-entered pick for this player has served its purpose.
-            self.manual.pop(number, None)
+
+            # By player, not by slot. Popping by slot deleted whatever the human recorded
+            # at that number even when it was somebody else, with no note anywhere.
+            for slot, held in list(self.manual.items()):
+                if held.player_key == player_key:
+                    del self.manual[slot]
+                elif slot == number:
+                    # Somebody else's hand-entered sale sits where the room says this one
+                    # goes. Bridge outranks manual in `board`, so leaving it would hide a
+                    # real sale: no money charged, no roster spot, no warning. Move it.
+                    del self.manual[slot]
+                    moved = self.next_free_pick()
+                    self.manual[moved] = replace(held, pick=moved)
+                    if slot in self.manual_order:
+                        self.manual_order[self.manual_order.index(slot)] = moved
+                    self.superseded.append(
+                        f"Pick {slot}: the draft room reports {player_key} there, so your "
+                        f"entry for {held.player_key} moved to pick {moved}"
+                    )
 
             if previous is None:
                 applied.append(entry)
@@ -584,11 +655,40 @@ class DraftState:
     def league_slots_remaining(self) -> int:
         return sum(self.slots_remaining(team.team_key) for team in self.teams)
 
+    def remove_player(self, player_key: str) -> DraftPick | None:
+        """Take a player off the board whichever writer put him there.
+
+        Undo could only ever reach hand-entered picks, so a sale the bridge resolved to
+        the wrong player -- the price-guess path can do that -- had no way back off the
+        board at all, and the duplicate guard then refused to record the right one.
+        """
+        entry = None
+        for table in (self.synced, self.bridge, self.manual):
+            for number, pick in list(table.items()):
+                if pick.player_key == player_key:
+                    entry = entry or pick
+                    del table[number]
+                    if number in self.manual_order:
+                        self.manual_order.remove(number)
+        self.bridge_order.pop(player_key, None)
+        return entry
+
     def undo_last_manual(self) -> DraftPick | None:
+        """Remove the pick most recently entered by hand.
+
+        Tracked in entry order rather than taken as ``max(self.manual)``. That stood in
+        for "most recent" only while the default pick number counted upward; once
+        ``record_manual`` began filling holes, the highest number could be an entry made
+        minutes ago, and undo would delete a correct pick while leaving the mistyped one
+        on the board charging the wrong amount.
+        """
+        while self.manual_order:
+            entry = self.manual.pop(self.manual_order.pop(), None)
+            if entry is not None:
+                return entry
         if not self.manual:
             return None
-        latest = max(self.manual)
-        return self.manual.pop(latest)
+        return self.manual.pop(max(self.manual))
 
     def staleness(self, now: float) -> float | None:
         """Seconds since the last successful sync, or None if we have never synced."""

@@ -36,8 +36,10 @@ def assistant(state) -> Assistant:
     return Assistant.build(state.league, state, build_snapshot(), lock=threading.Lock())
 
 
-def sale(player_key: str, team_key: str = RIVAL, cost: int = 10) -> BridgeSale:
-    return BridgeSale(player_key=player_key, team_key=team_key, cost=cost)
+def sale(
+    player_key: str, team_key: str = RIVAL, cost: int = 10, pick: int | None = None
+) -> BridgeSale:
+    return BridgeSale(player_key=player_key, team_key=team_key, cost=cost, pick=pick)
 
 
 class TestSnapshotSemantics:
@@ -464,6 +466,28 @@ class TestBridgeTokenGate:
         )
         assert res.status_code == 401
 
+    def test_every_route_is_gated_not_just_the_paste_one(self, assistant):
+        """CORS grants the Yahoo origin the whole app, so the token must cover it."""
+        client = self._client(assistant, token="secret")
+        for method, path in (
+            ("post", "/api/undo"),
+            ("get", "/api/state"),
+            ("get", "/api/recommend"),
+        ):
+            res = getattr(client, method)(path, headers={"Origin": self.YAHOO})
+            assert res.status_code == 401, path
+
+    def test_a_hostname_that_merely_starts_with_localhost_is_external(self, assistant):
+        client = self._client(assistant, token="secret")
+        res = client.get("/api/state", headers={"Origin": "http://localhost.evil.example"})
+        assert res.status_code == 401
+
+    def test_the_apps_own_origin_is_not_gated(self, assistant):
+        client = self._client(assistant, token="secret")
+        assert client.get(
+            "/api/state", headers={"Origin": "http://127.0.0.1:8777"}
+        ).status_code == 200
+
     def test_without_bridge_mode_no_external_origin_may_post(self, assistant):
         """Default is closed: the board is reachable from its own page and nowhere else."""
         client = self._client(assistant, token="")
@@ -527,3 +551,109 @@ class TestNominationLookup:
         looked_up = client.get(f"/api/lookup?q={board['name']}").json()["results"][0]
         assert looked_up["value"] == board["value"]
         assert looked_up["bid_to"] == board["bid_to"]
+
+
+class TestWritersDoNotDoubleCharge:
+    """Every confirmed path to one player on the board twice."""
+
+    def test_the_yahoo_feed_and_the_bridge_agree_about_one_sale(self, state):
+        """--bridge and the API poller are independent flags, so both can be live."""
+        from ff_helper.yahoo.models import DraftPick
+
+        state.apply_bridge([sale("461.p.RB0", cost=50)], timestamp=1.0)
+        state.apply_sync(
+            [DraftPick(pick=42, round=1, team_key=RIVAL, player_key="461.p.RB0", cost=50)],
+            timestamp=2.0,
+        )
+        assert state.spent(RIVAL) == 50
+        assert [p.player_key for p in state.board.values()].count("461.p.RB0") == 1
+
+    def test_a_yahoo_pick_does_not_shadow_a_different_bridge_sale(self, state):
+        from ff_helper.yahoo.models import DraftPick
+
+        state.apply_bridge(
+            [sale("461.p.RB0", cost=50, pick=1), sale("461.p.WR0", cost=30, pick=2)],
+            timestamp=1.0,
+        )
+        state.apply_sync(
+            [DraftPick(pick=1, round=1, team_key=RIVAL, player_key="461.p.RB0", cost=50)],
+            timestamp=2.0,
+        )
+        assert state.spent(RIVAL) == 80, "a sold player must not fall off the board"
+        assert "461.p.WR0" in state.drafted_player_keys
+
+    def test_pick_zero_is_a_real_pick_number(self, state):
+        """`or` treated it as absent and allocated a second slot for the same player."""
+        state.record_manual("461.p.RB0", pick=0, cost=30, team_key=RIVAL)
+        state.apply_bridge([sale("461.p.RB0", cost=30)], timestamp=1.0)
+        assert state.spent(RIVAL) == 30
+
+    def test_a_hand_entry_for_another_player_is_not_deleted(self, state):
+        """apply_bridge popped the manual entry by slot, not by player."""
+        state.record_manual("461.p.TE0", pick=1, cost=30, team_key=RIVAL)
+        state.apply_bridge([sale("461.p.RB0", cost=50, pick=1)], timestamp=1.0)
+        assert "461.p.TE0" in state.drafted_player_keys
+
+
+class TestRemovalsAreNotRefunds:
+    def test_an_empty_reading_never_empties_the_board(self, state):
+        """With two sales, both sat inside shrink_tolerance and were refunded."""
+        state.apply_bridge(
+            [sale("461.p.RB0", cost=90, pick=1), sale("461.p.WR0", cost=80, pick=2)],
+            timestamp=1.0,
+        )
+        diff = state.apply_bridge([], timestamp=2.0)
+        assert diff.rejected
+        assert state.spent(RIVAL) == 170
+
+    def test_removals_are_withheld_when_the_reading_was_incomplete(self, state):
+        """A row that failed to resolve looks exactly like a sale that vanished."""
+        state.apply_bridge([sale("461.p.RB0", cost=50, pick=1)], timestamp=1.0)
+        diff = state.apply_bridge([], timestamp=2.0, allow_removals=False)
+        assert diff.removed == []
+        assert state.spent(RIVAL) == 50
+
+
+class TestRemovalAndUndo:
+    def test_a_bridge_pick_can_be_taken_off_the_board(self, state):
+        state.apply_bridge([sale("461.p.RB0", cost=50, pick=1)], timestamp=1.0)
+        assert state.remove_player("461.p.RB0") is not None
+        assert state.spent(RIVAL) == 0
+        assert "461.p.RB0" not in state.drafted_player_keys
+
+    def test_undo_removes_what_was_entered_last_not_the_highest_number(self, state):
+        first = state.record_manual("461.p.RB0", pick=6, cost=10, team_key=RIVAL)
+        last = state.record_manual("461.p.WR0", pick=3, cost=10, team_key=RIVAL)
+        assert state.undo_last_manual().pick == last.pick
+        assert first.pick in state.manual
+
+
+class TestGuessesKeepBeingReported:
+    def test_a_priced_guess_is_reported_on_every_reading(self, assistant):
+        """The cache returned "cached", so the warning fired once and never again."""
+        from ff_helper.draft.bridge import BridgeResolver
+
+        registry = assistant.registry
+        cheap, dear = registry.players[0], registry.players[1]
+        resolver = BridgeResolver(
+            registry,
+            assistant.state.teams,
+            values={cheap.player_key: 3.0, dear.player_key: 70.0},
+        )
+        resolver.registry = _TwoCandidates(registry, [cheap, dear])
+        rows = [RawSale(name="X. Ambiguous", cost=68, buyer=RIVAL)]
+        runs = [len(resolver.resolve_all(rows, is_auction=True).assumed) for _ in range(3)]
+        assert runs == [1, 1, 1], "a guess must keep being reported, not just the once"
+
+
+class TestShortBuyerNames:
+    def test_a_three_letter_team_name_is_not_eaten_as_an_nfl_team(self):
+        """"TNT" matched the abbreviation shape and left the buyer blank."""
+        assert parse_paste("Ja'Marr Chase,55,TNT")[0].buyer == "TNT"
+
+    def test_a_truncated_team_name_still_folds(self):
+        """The draft room truncates with an ellipsis; the settings page does not."""
+        from ff_helper.draft.bridge import _fold
+
+        assert _fold("Rx…") == _fold("Rx...")
+        assert _fold("Team 2…") == _fold("Team 2")

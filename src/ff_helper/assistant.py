@@ -377,6 +377,10 @@ class Assistant:
                 "roster_counts": roster_counts,
                 "staleness": staleness,
                 "sync_error": state.last_sync_error,
+                "unresolved": [
+                    {"name": name, "buyer": buyer, "cost": cost}
+                    for name, (buyer, cost) in state.unresolved.items()
+                ],
                 "superseded": state.superseded[-5:],
                 "notes": self.notes,
             }

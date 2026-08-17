@@ -245,6 +245,12 @@ function renderState(s) {
   }
 
   const alerts = [];
+  // Sales a reading saw but could not place. The player is still being offered as
+  // available, so this has to appear on the board itself -- the reader's badge lives on
+  // the Yahoo tab, and this is the tab you bid from.
+  (s.unresolved || []).forEach(u => alerts.push(
+    `NOT RECORDED: "${u.name}"${u.cost ? " $" + u.cost : ""}${u.buyer ? " to " + u.buyer : ""}`
+    + ` \u2014 he is still shown as available. Enter him by hand.`));
   if (s.sync_error) alerts.push(`Sync error: ${s.sync_error}`);
   (s.superseded || []).forEach(m => alerts.push(m));
   $("alerts").innerHTML = alerts.map(a => `<div class="alert">${a}</div>`).join("");
@@ -402,6 +408,7 @@ async function refresh() {
 // for the keyboard: name, Enter, price, Enter, buyer, Enter. Nothing here needs a mouse,
 // and nothing fails quietly.
 let searchTimer = null;
+let searchSeq = 0;
 let matches = [];
 let highlighted = 0;
 let chosen = null;
@@ -505,8 +512,10 @@ $("search").addEventListener("input", e => {
   chosen = null;
   const q = e.target.value.trim();
   if (!q) { matches = []; drawMatches(); return; }
+  const mine = ++searchSeq;
   searchTimer = setTimeout(async () => {
     const data = await getJSON(`/api/search?q=${encodeURIComponent(q)}`);
+    if (mine !== searchSeq) return;
     matches = data.results || [];
     highlighted = 0;
     drawMatches();
@@ -553,6 +562,10 @@ $("searchResults").addEventListener("click", e => {
 // is he worth and when do I stop. Deliberately read-only -- it records nothing, so it can
 // be used freely on players you have no intention of bidding for.
 let nomTimer = null;
+// Monotonic id: only the newest request may paint. clearTimeout cancels a *scheduled*
+// request, not an in-flight one, so without this a slow earlier response overwrites a
+// newer one and you read the wrong player's ceiling with a clock running.
+let nomSeq = 0;
 
 function renderNomination(data) {
   const box = $("nomResult");
@@ -603,10 +616,19 @@ $("nomBox").addEventListener("input", e => {
   clearTimeout(nomTimer);
   const q = e.target.value.trim();
   if (!q) { $("nomResult").innerHTML = ""; return; }
+  const mine = ++nomSeq;
   nomTimer = setTimeout(async () => {
     try {
-      renderNomination(await getJSON(`/api/lookup?q=${encodeURIComponent(q)}`));
-    } catch (err) { /* transient; the next keystroke retries */ }
+      const data = await getJSON(`/api/lookup?q=${encodeURIComponent(q)}`);
+      if (mine === nomSeq) renderNomination(data);
+    } catch (err) {
+      // Never leave the previous player's numbers standing as though they answered this
+      // query -- mid-auction that is read as a price.
+      if (mine === nomSeq) {
+        $("nomResult").innerHTML =
+          `<div class="alert">Could not value that: ${err.message || err}</div>`;
+      }
+    }
   }, 120);
 });
 
@@ -648,8 +670,10 @@ $("pasteBtn").addEventListener("click", async () => {
   if (res.assigned_buyers && res.assigned_buyers.length) {
     // Their money leaves the room correctly, which is what prices everything; only that
     // rival's own budget is a guess.
+    const seen = new Map();
+    res.assigned_buyers.forEach(a => seen.set(a.buyer, a.team));
     message += " New buyers: "
-      + res.assigned_buyers.map(a => `${a.buyer} → ${a.team}`).join(", ") + ".";
+      + [...seen].map(([buyer, team]) => `${buyer} \u2192 ${team}`).join(", ") + ".";
   }
   if (res.assumed && res.assumed.length) {
     // Yahoo abbreviates to a first initial, so these were settled by what the player sold
