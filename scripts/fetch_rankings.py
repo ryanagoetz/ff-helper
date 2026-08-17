@@ -39,6 +39,7 @@ from ff_helper.engine.scoring import scoring_slug  # noqa: E402
 from ff_helper.rankings import cache  # noqa: E402
 from ff_helper.rankings.players import PlayerRegistry, SourceRow  # noqa: E402
 from ff_helper.rankings.sources import (  # noqa: E402
+    adp_csv,
     fantasypros,
     ffc,
     projections_csv,
@@ -69,6 +70,13 @@ def main() -> int:
         help="Build the snapshot with no Yahoo API access, from a league config YAML. "
         "The player pool comes from --projections instead of Yahoo. Use this when API "
         "approval has not arrived and the draft has.",
+    )
+    parser.add_argument(
+        "--adp",
+        type=Path,
+        help="Rankings export carrying platform ADP, e.g. 4for4's 'ADP (Y!)' column. "
+        "Defaults to data/adp.csv. Offline this is the only way to get Yahoo's own ADP, "
+        "which the blend weights at 0.65.",
     )
     parser.add_argument(
         "--projections",
@@ -118,6 +126,33 @@ def main() -> int:
         rows.extend(projection_rows)
         players = offline.players_from_rows(projection_rows, league_key)
         print(f"Player pool from {projections_path.name}: {len(players)} players")
+
+        # Platform ADP, if a rankings export is available. Offline this is the only
+        # route to Yahoo's own ADP, which is the heaviest-weighted market signal there
+        # is -- without it the board is guessing at national ADP.
+        adp_path = args.adp or (DATA_DIR / "adp.csv")
+        if adp_path.exists():
+            try:
+                adp_rows, adp_label = adp_csv.load(adp_path)
+                rows.extend(adp_rows)
+                print(f"ADP from {adp_path.name}: {len(adp_rows)} players ({adp_label})")
+                if adp_label == "yahoo":
+                    notes.append(f"Yahoo ADP from {adp_path.name} ({len(adp_rows)} players)")
+                else:
+                    notes.append(
+                        f"{adp_path.name} has no Yahoo ADP column, so its ADP is blended "
+                        f"as '{adp_label}' at the ordinary weight rather than Yahoo's."
+                    )
+            except adp_csv.AdpError as exc:
+                print(f"  FAILED: {exc}")
+                return 1
+        else:
+            notes.append(
+                "No Yahoo ADP offline. Export a rankings file with an 'ADP (Y!)' column "
+                f"to {adp_path} -- Yahoo ADP describes your actual draft room and is "
+                "weighted 0.65 when present."
+            )
+            print(f"  No {adp_path.name}; ADP will come from FFC and the projections only.")
     else:
         settings = load_settings()
         league_key = args.league or settings.league_key
