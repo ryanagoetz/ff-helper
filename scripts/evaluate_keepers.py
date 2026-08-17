@@ -61,6 +61,15 @@ class Candidate:
     vor: float | None = None
     surplus: float | None = None
     benchmark: str = ""
+    value_rank: int | None = None
+    adp_rank: int | None = None
+
+    @property
+    def market_gap(self) -> int | None:
+        """Places the room ranks him above your projections. Positive = they like him more."""
+        if self.value_rank is None or self.adp_rank is None:
+            return None
+        return self.value_rank - self.adp_rank
 
 
 def _column(row: dict, candidates: tuple[str, ...]) -> str | None:
@@ -113,6 +122,12 @@ def main() -> int:
         help="CSV of players you could keep. Columns: player,cost (auction) or "
         "player,round (snake).",
     )
+    parser.add_argument(
+        "--slots",
+        type=int,
+        help="How many players your league lets you keep. Without it, every player with "
+        "positive surplus is treated as keepable.",
+    )
     args = parser.parse_args()
 
     if args.offline:
@@ -158,6 +173,17 @@ def main() -> int:
     # Par values with nobody kept: the baseline a keeper's price is judged against.
     dollars = compute_par_values(all_values, levels, league.settings, league.num_teams)
 
+    # Where the room's opinion and your projections disagree, a keeper price can be a
+    # bargain against the market even when it is not against your own numbers -- and the
+    # room is who you would have to outbid to get him back.
+    by_value = sorted(
+        (v for v in all_values if v.position in {"QB", "RB", "WR", "TE"}),
+        key=lambda v: -dollars.value_of(v.player_key),
+    )
+    value_rank = {v.player_key: index + 1 for index, v in enumerate(by_value)}
+    by_adp = sorted(by_value, key=lambda v: v.adp)
+    adp_rank = {v.player_key: index + 1 for index, v in enumerate(by_adp)}
+
     by_key = valuations.valuations
     for candidate in candidates:
         probe = SourceRow(name=candidate.name, position="", team="", source="csv")
@@ -169,13 +195,15 @@ def main() -> int:
             continue
         candidate.vor = levels.vor(candidate.valuation)
         candidate.par = dollars.value_of(player.player_key)
+        candidate.value_rank = value_rank.get(player.player_key)
+        candidate.adp_rank = adp_rank.get(player.player_key)
 
     unmatched = [c for c in candidates if c.valuation is None]
 
     if league.settings.is_auction:
-        _report_auction(candidates, league)
+        _report_auction(candidates, league, args.slots)
     else:
-        _report_snake(candidates, all_values, levels, league)
+        _report_snake(candidates, all_values, levels, league, args.slots)
 
     if unmatched:
         print(f"\n{len(unmatched)} candidates could not be valued:")
@@ -186,7 +214,9 @@ def main() -> int:
     return 0
 
 
-def _report_auction(candidates: list[Candidate], league: League) -> None:
+def _report_auction(
+    candidates: list[Candidate], league: League, slots: int | None = None
+) -> None:
     priced = [c for c in candidates if c.valuation is not None and c.par is not None]
     for candidate in priced:
         if candidate.cost is not None:
@@ -210,23 +240,76 @@ def _report_auction(candidates: list[Candidate], league: League) -> None:
             f"{cost:>7s} {surplus:>9s}  {verdict}{estimated}"
         )
 
-    keepers = [c for c in priced if c.surplus is not None and c.surplus > 0]
+    positive = [c for c in priced if c.surplus is not None and c.surplus > 0]
+    # Surplus is additive and the slots do not interact, so the best set of N is simply
+    # the N largest surpluses. Budget is the only coupling, and it is reported below.
+    keepers = positive[:slots] if slots else positive
+
     if keepers:
         spend = sum(c.cost for c in keepers)
         gained = sum(c.surplus for c in keepers)
         budget = league.settings.auction_budget
-        print(
-            f"\n  Keeping every player with positive surplus: {len(keepers)} players, "
-            f"${spend:,.0f} of ${budget} spent,\n  ${budget - spend:,.0f} left for "
-            f"{league.settings.roster_size - len(keepers)} more spots, "
-            f"${gained:,.0f} of value gained over paying market."
-        )
-        if spend > budget * 0.75:
+        spots_left = league.settings.roster_size - len(keepers)
+        max_bid = budget - spend - (spots_left - 1)
+
+        header = f"best {len(keepers)} of {len(positive)} with positive surplus"
+        print(f"\n  Keep ({header}):")
+        for candidate in keepers:
             print(
-                "\n  That is most of your budget on a few players. It is a real strategy, "
-                "but it\n  leaves you buying the rest of the roster at the minimum -- and "
-                "everyone else's\n  money is still chasing the players you did not keep."
+                f"    {candidate.valuation.name:24s} ${candidate.cost:,.0f} "
+                f"-> ${candidate.par:,.0f}  (${candidate.surplus:+,.0f})"
             )
+        print(
+            f"\n  ${spend:,.0f} of ${budget} committed, ${budget - spend:,.0f} left for "
+            f"{spots_left} spots.\n  Opening max bid ${max_bid:,.0f}. "
+            f"${gained:,.0f} of value gained over buying them back at par."
+        )
+
+        if slots and len(positive) > slots:
+            missed = positive[slots:]
+            print(
+                f"\n  Not kept, despite positive surplus (only {slots} slots): "
+                + ", ".join(f"{c.valuation.name} (${c.surplus:+,.0f})" for c in missed[:5])
+            )
+        if spend > budget * 0.5:
+            print(
+                "\n  That is over half the budget on your keepers. Defensible when the "
+                "surplus is\n  this large, but it leaves the rest of the roster to be "
+                "bought cheaply -- and\n  everyone else's money is still chasing the "
+                "players you did not keep."
+            )
+
+    unpriced = [c for c in priced if c.cost is None]
+    if unpriced:
+        print("\n  Worth pricing -- you did not give a salary, but they have value:")
+        for candidate in sorted(unpriced, key=lambda c: -(c.par or 0)):
+            print(f"    {candidate.valuation.name:24s} worth ${candidate.par:,.0f}")
+
+    # A cheap keeper the room rates far above your projections is the one call this tool
+    # cannot make for you: your numbers say let him go, and the draft room says you would
+    # have to pay up to get him back.
+    contested = [
+        c
+        for c in priced
+        if c.cost is not None
+        and (c.market_gap or 0) >= 40
+        and c.surplus is not None
+        and c.surplus <= 0
+    ]
+    if contested:
+        print("\n  Your projections and the draft room disagree about these:")
+        for candidate in sorted(contested, key=lambda c: -(c.market_gap or 0)):
+            print(
+                f"    {candidate.valuation.name:22s} ${candidate.cost:,.0f}  "
+                f"your value rank {candidate.value_rank}, ADP rank {candidate.adp_rank}"
+            )
+        print(
+            "    4for4 projects them below what the room will pay. If you trust the room\n"
+            "    over the projection, the keeper price is a bargain; if you trust the\n"
+            "    projection, letting them go is right. No auction values in the export, so\n"
+            "    this is a rank comparison rather than a dollar one."
+        )
+
     print("\n  * projection interpolated from consensus rank rather than a stat line.")
 
 
@@ -246,6 +329,7 @@ def _report_snake(
     all_values: list[PlayerValuation],
     levels: replacement.ReplacementLevels,
     league: League,
+    slots: int | None = None,
 ) -> None:
     """Judge a keeper against the player his forfeited pick would otherwise buy."""
     ordered = sorted(all_values, key=lambda v: v.adp)
