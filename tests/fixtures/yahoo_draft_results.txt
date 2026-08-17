@@ -1,0 +1,133 @@
+Pick	Player	Team	Cost
+Round 2
+16	
+D. London
+D. London
+WR
+Atl
+Bye 11
+Team 13
+$48
+15	
+A. Jeanty
+A. Jeanty
+RB
+LV
+Bye 13
+Shazad
+$51
+Round 1
+14	
+B. Bowers
+B. Bowers
+TE
+LV
+Bye 13
+Team 10
+$41
+13	
+K. Walker III
+K. Walker III
+RB
+KC
+Bye 5
+Team 8
+$50
+12	
+J. Jefferson
+J. Jefferson
+WR
+Min
+Bye 6
+Dave
+$52
+11	
+S. Barkley
+S. Barkley
+RB
+Phi
+Bye 10
+Team 8
+$55
+10	
+J. Cook III
+J. Cook III
+RB
+Buf
+Bye 7
+Shazad
+$60
+9	
+J. Taylor
+J. Taylor
+RB
+Ind
+Bye 13
+Your Team
+$68
+8	
+J. Smith-Njigba
+J. Smith-Njigba
+WR
+Sea
+Bye 11
+Dave
+$66
+7	
+A. St. Brown
+A. St. Brown
+WR
+Det
+Bye 6
+Team 14
+$69
+6	
+C. McCaffrey
+C. McCaffrey
+Q
+RB
+SF
+Bye 8
+Team 11
+$63
+5	
+C. Lamb
+C. Lamb
+WR
+Dal
+Bye 14
+Derek
+$62
+4	
+P. Nacua
+P. Nacua
+Q
+WR
+LAR
+Bye 11
+Niki
+$66
+3	
+B. Robinson
+B. Robinson
+RB
+Atl
+Bye 11
+Your Team
+$71
+2	
+J. Chase
+J. Chase
+WR
+Cin
+Bye 6
+Derek
+$72
+1	
+J. Gibbs
+J. Gibbs
+RB
+Det
+Bye 6
+Team 11
+$74

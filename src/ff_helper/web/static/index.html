@@ -573,6 +573,12 @@ $("pasteBtn").addEventListener("click", async () => {
   if (res.removed) bits.push(`${res.removed} removed`);
   if (res.unchanged) bits.push(`${res.unchanged} unchanged`);
   let message = bits.join(", ") + ".";
+  if (res.assumed && res.assumed.length) {
+    // Yahoo abbreviates to a first initial, so these were settled by what the player sold
+    // for. Worth a glance: the wrong choice puts money on the wrong player.
+    message += " Resolved by price: "
+      + res.assumed.map(a => `${a.name} → ${a.player}`).join(", ") + ".";
+  }
   if (res.fuzzy && res.fuzzy.length) {
     message += ` Matched by similarity: ${res.fuzzy.map(f => f.name).join(", ")} — check these.`;
   }

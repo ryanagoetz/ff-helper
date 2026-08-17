@@ -121,6 +121,9 @@ def create_app(assistant: Assistant, sync: DraftSync | None) -> FastAPI:
                     assistant.registry,
                     assistant.state.teams,
                     team_aliases=assistant.team_aliases,
+                    # Par values let an abbreviated name like "B. Robinson" be settled by
+                    # what it sold for when the name alone fits two players.
+                    values=assistant.dollars.par if assistant.dollars else None,
                 )
             )
         return cached[0]
@@ -247,6 +250,10 @@ def create_app(assistant: Assistant, sync: DraftSync | None) -> FastAPI:
             "removed": len(diff.removed),
             "unchanged": diff.unchanged,
             "fuzzy": [{"name": name, "player_key": key} for name, key in report.fuzzy],
+            "assumed": [
+                {"name": name, "player": assistant._player_name(key)}
+                for name, key in report.assumed
+            ],
         }
 
     @app.post("/api/undo")

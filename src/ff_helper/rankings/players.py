@@ -280,6 +280,29 @@ class PlayerRegistry:
 
         return None
 
+    def candidates(self, row: SourceRow) -> list[YahooPlayer]:
+        """Every player a name could plausibly mean, including ambiguous ones.
+
+        ``find`` deliberately returns nothing when an abbreviated name fits more than one
+        player, because picking between them is a coin toss that ruins both valuations.
+        But Yahoo's draft room writes names as "B. Robinson", so the caller sometimes has
+        evidence ``find`` does not -- what the player sold for, say -- and needs the list
+        in order to use it.
+        """
+        position = normalize_position(row.position)
+        team = normalize_team(row.team)
+
+        for variant in name_variants(row.name):
+            found = self._index.get((variant, position)) or self._by_name.get(variant)
+            if not found:
+                continue
+            if team:
+                on_team = [p for p in found if normalize_team(p.team_abbr) == team]
+                if on_team:
+                    return list(on_team)
+            return list(found)
+        return []
+
     def find_fuzzy(self, row: SourceRow) -> tuple[YahooPlayer | None, float]:
         """Last resort: closest name above the similarity threshold, same position.
 

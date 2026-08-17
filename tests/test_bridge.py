@@ -9,6 +9,7 @@ money, not on structure.
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +18,8 @@ from ff_helper.draft.bridge import BridgeResolver, RawSale, parse_paste
 from ff_helper.draft.state import BridgeSale, DraftState
 from tests.test_auction import auction_league, auction_teams
 from tests.test_web import MY_SLOT, build_snapshot
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 MY_KEY = f"461.l.1.t.{MY_SLOT}"
 RIVAL = "461.l.1.t.2"
@@ -259,3 +262,106 @@ class TestWholeAuctionThroughTheBridge:
 
         assert len(state.board) == len(players)
         assert len({pick.player_key for pick in state.board.values()}) == len(players)
+
+
+class TestRealYahooDraftRoom:
+    """Against text actually copied out of a Yahoo auction draft room.
+
+    Everything here was guesswork until this fixture existed. Yahoo writes one record per
+    sale across several lines, newest first, with round headings in between, the name
+    repeated, an injury flag only sometimes, and the reader's own team called "Your Team".
+    """
+
+    def _text(self) -> str:
+        return (FIXTURES / "yahoo_draft_results.txt").read_text(encoding="utf-8")
+
+    def test_every_sale_is_read(self):
+        sales = parse_paste(self._text())
+        assert len(sales) == 16
+
+    def test_the_fields_land_in_the_right_places(self):
+        sales = {sale.line: sale for sale in parse_paste(self._text())}
+        gibbs = sales[1]
+        assert gibbs.name == "J. Gibbs"
+        assert gibbs.position == "RB"
+        assert gibbs.team_abbr == "DET"
+        assert gibbs.cost == 74
+        assert gibbs.buyer == "Team 11"
+
+    def test_an_injury_flag_does_not_shift_the_columns(self):
+        """McCaffrey carries a "Q" line that London does not."""
+        sales = {sale.line: sale for sale in parse_paste(self._text())}
+        cmc = sales[6]
+        assert cmc.name == "C. McCaffrey"
+        assert cmc.position == "RB"
+        assert cmc.team_abbr == "SF"
+        assert cmc.cost == 63
+
+    def test_round_headings_and_the_table_header_are_not_sales(self):
+        names = {sale.name for sale in parse_paste(self._text())}
+        assert not any(name.lower().startswith("round") for name in names)
+        assert "Player" not in names
+
+    def test_your_team_is_the_reader(self):
+        """Yahoo never prints your own team's name, so without this your budget is wrong."""
+        sales = [sale for sale in parse_paste(self._text()) if sale.buyer == "Your Team"]
+        assert len(sales) == 2  # J. Taylor and B. Robinson
+
+
+class TestAbbreviatedNames:
+    """Yahoo writes "B. Robinson", and an initial is not an identity."""
+
+    def _resolver(self, assistant, values=None):
+        return BridgeResolver(assistant.registry, assistant.state.teams, values=values)
+
+    def test_an_unambiguous_initial_resolves(self, assistant):
+        key, how = self._resolver(assistant).resolve_player(
+            RawSale(name="R. Player0", position="RB", team_abbr="FA")
+        )
+        assert key is not None and how == "exact"
+
+    def test_an_ambiguous_initial_is_settled_by_price(self, assistant):
+        """Two players fit the name; what it sold for says which."""
+        registry = assistant.registry
+        cheap, dear = registry.players[0], registry.players[1]
+        values = {cheap.player_key: 3.0, dear.player_key: 70.0}
+        resolver = self._resolver(assistant, values=values)
+        resolver.registry = _TwoCandidates(registry, [cheap, dear])
+
+        key, how = resolver.resolve_player(RawSale(name="X. Ambiguous", cost=68))
+        assert key == dear.player_key
+        assert how == "priced"
+
+        key, how = resolver.resolve_player(RawSale(name="X. Ambiguous", cost=2))
+        assert key == cheap.player_key
+
+    def test_a_priced_guess_is_reported_not_hidden(self, assistant):
+        registry = assistant.registry
+        cheap, dear = registry.players[0], registry.players[1]
+        resolver = self._resolver(
+            assistant, values={cheap.player_key: 3.0, dear.player_key: 70.0}
+        )
+        resolver.registry = _TwoCandidates(registry, [cheap, dear])
+        report = resolver.resolve_all(
+            [RawSale(name="X. Ambiguous", cost=68, buyer=RIVAL)], is_auction=True
+        )
+        assert len(report.assumed) == 1
+
+
+class _TwoCandidates:
+    """A registry whose exact lookup abstains, as it does for a genuinely ambiguous name."""
+
+    def __init__(self, real, options):
+        self._real = real
+        self._options = options
+        self.by_key = real.by_key
+        self.players = real.players
+
+    def find(self, row):
+        return None
+
+    def candidates(self, row):
+        return list(self._options)
+
+    def find_fuzzy(self, row):
+        return None, 0.0

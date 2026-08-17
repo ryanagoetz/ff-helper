@@ -42,6 +42,9 @@ _POSITIONS = {"QB", "RB", "WR", "TE", "K", "PK", "DEF", "DST", "D/ST"}
 # An NFL team abbreviation: two to four letters, all caps, and not a position.
 _TEAM_ABBR = re.compile(r"^[A-Z]{2,4}$")
 
+# Yahoo prints an injury designation on its own line, between the name and the position.
+_INJURY_FLAGS = {"Q", "O", "D", "IR", "PUP", "SUSP", "NA"}
+
 
 @dataclass(frozen=True)
 class RawSale:
@@ -64,6 +67,9 @@ class ResolutionReport:
     unknown_buyers: list[RawSale] = field(default_factory=list)
     missing_price: list[RawSale] = field(default_factory=list)
     fuzzy: list[tuple[str, str]] = field(default_factory=list)
+    # Matches settled by price because the name alone fit more than one player. Surfaced
+    # so a wrong guess is visible rather than silently on the board.
+    assumed: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -86,38 +92,66 @@ class BridgeResolver:
         teams: list[Team],
         *,
         team_aliases: dict[str, str] | None = None,
+        values: dict[str, float] | None = None,
     ) -> None:
         self.registry = registry
         self.teams = teams
+        self.values = values or {}
         self._players: dict[tuple[str, str], str | None] = {}
         self._by_team_name: dict[str, str] = {}
         for team in teams:
             self._by_team_name[_fold(team.name)] = team.team_key
             self._by_team_name[team.team_key] = team.team_key
+            # Yahoo labels the reader's own team "Your Team" rather than by name, so
+            # without this every one of your own purchases fails to resolve -- and your
+            # budget is the number the whole app exists to produce.
+            if team.is_mine:
+                self._by_team_name[YOUR_TEAM] = team.team_key
         for alias, target in (team_aliases or {}).items():
             resolved = self._by_team_name.get(_fold(target))
             if resolved:
                 self._by_team_name[_fold(alias)] = resolved
 
-    def resolve_player(self, sale: RawSale) -> tuple[str | None, bool]:
-        """Returns ``(player_key, was_fuzzy)``."""
-        cache_key = (_fold(sale.name), sale.team_abbr.upper())
+    def resolve_player(self, sale: RawSale) -> tuple[str | None, str]:
+        """Returns ``(player_key, how)`` where *how* is exact, fuzzy, priced, or "".
+
+        Yahoo's draft room abbreviates names to a first initial -- "B. Robinson" -- and an
+        initial is not an identity. ``find`` refuses when one fits two players, which is
+        right when nothing can separate them, but the sale price often can: Bijan Robinson
+        is worth about $90 to this league and Brian Robinson about $1, so a $71 sale is
+        not in genuine doubt. Where price settles it, that is reported as an assumption
+        rather than passed off as a match.
+        """
+        cache_key = (_fold(sale.name), sale.team_abbr.upper(), sale.cost or 0)
         if cache_key in self._players:
-            key = self._players[cache_key]
-            return key, False
+            return self._players[cache_key], "cached"
 
         row = SourceRow(
             name=sale.name, position=sale.position, team=sale.team_abbr, source="bridge"
         )
         player = self.registry.find(row)
-        fuzzy = False
+        how = "exact" if player else ""
+
+        if player is None:
+            options = self.registry.candidates(row)
+            if len(options) == 1:
+                player, how = options[0], "exact"
+            elif len(options) > 1 and sale.cost is not None and self.values:
+                player = min(
+                    options,
+                    key=lambda candidate: abs(
+                        self.values.get(candidate.player_key, 0.0) - float(sale.cost)
+                    ),
+                )
+                how = "priced"
+
         if player is None:
             player, _score = self.registry.find_fuzzy(row)
-            fuzzy = player is not None
+            how = "fuzzy" if player else ""
 
         key = player.player_key if player else None
         self._players[cache_key] = key
-        return key, fuzzy
+        return key, how
 
     def resolve_team(self, buyer: str) -> str | None:
         return self._by_team_name.get(_fold(buyer))
@@ -125,12 +159,14 @@ class BridgeResolver:
     def resolve_all(self, sales: list[RawSale], *, is_auction: bool) -> ResolutionReport:
         report = ResolutionReport()
         for sale in sales:
-            player_key, fuzzy = self.resolve_player(sale)
+            player_key, how = self.resolve_player(sale)
             if player_key is None:
                 report.unknown_players.append(sale)
                 continue
-            if fuzzy:
+            if how == "fuzzy":
                 report.fuzzy.append((sale.name, player_key))
+            elif how == "priced":
+                report.assumed.append((sale.name, player_key))
 
             team_key = ""
             if is_auction:
@@ -167,6 +203,83 @@ def _fold(value: str) -> str:
     return cleaned.strip()
 
 
+# Yahoo's draft-results panel copies out one record per sale, across several lines:
+#
+#     3⇥                <- pick number, trailing tab
+#     B. Robinson       <- name
+#     B. Robinson       <- the same name again
+#     Q                 <- injury designation, only sometimes
+#     RB                <- position
+#     Atl               <- NFL team
+#     Bye 11
+#     Your Team         <- the buyer
+#     $71               <- price
+#
+# Records run newest-first with "Round N" headings between them. Everything is read from
+# the end of the record backwards, because the only genuinely optional parts -- the
+# repeated name and the injury flag -- are at the front.
+_PICK_LINE = re.compile(r"^(\d{1,3})\s*$")
+_BYE_LINE = re.compile(r"^bye\b", re.IGNORECASE)
+_ROUND_LINE = re.compile(r"^round\s+\d+\s*$", re.IGNORECASE)
+_PRICE_LINE = re.compile(r"^\$\s*(\d{1,4})$")
+
+# Yahoo labels the reader's own team this way rather than by name.
+YOUR_TEAM = "your team"
+
+
+def parse_yahoo_results(text: str) -> list[RawSale]:
+    """Read Yahoo's draft-results panel as copied from the browser."""
+    lines = [line.strip() for line in text.splitlines()]
+    starts = [
+        index
+        for index, line in enumerate(lines)
+        if _PICK_LINE.match(line) and not _ROUND_LINE.match(line)
+    ]
+    if not starts:
+        return []
+
+    sales: list[RawSale] = []
+    for position, start in enumerate(starts):
+        end = starts[position + 1] if position + 1 < len(starts) else len(lines)
+        block = [line for line in lines[start + 1 : end] if line and not _ROUND_LINE.match(line)]
+        sale = _from_yahoo_block(int(lines[start]), block)
+        if sale is not None:
+            sales.append(sale)
+    return sales
+
+
+def _from_yahoo_block(pick: int, block: list[str]) -> RawSale | None:
+    if len(block) < 4:
+        return None
+
+    price = _PRICE_LINE.match(block[-1])
+    cost = int(price.group(1)) if price else None
+    rest = block[:-1] if price else list(block)
+    if not rest:
+        return None
+
+    buyer = rest.pop()
+    if rest and _BYE_LINE.match(rest[-1]):
+        rest.pop()
+
+    team_abbr = ""
+    if rest and _TEAM_ABBR.match(rest[-1].upper()) and rest[-1].upper() not in _POSITIONS:
+        team_abbr = rest.pop().upper()
+
+    position = ""
+    if rest and rest[-1].upper() in _POSITIONS:
+        position = rest.pop().upper()
+
+    # Whatever is left is the name, repeated and possibly preceded by an injury flag.
+    names = [value for value in rest if value.upper() not in _INJURY_FLAGS]
+    if not names:
+        return None
+
+    return RawSale(
+        name=names[0], cost=cost, buyer=buyer, team_abbr=team_abbr, position=position, line=pick
+    )
+
+
 def parse_paste(text: str) -> list[RawSale]:
     """Read sales out of text copied from a draft room.
 
@@ -181,6 +294,10 @@ def parse_paste(text: str) -> list[RawSale]:
     Rows that parse to nothing are skipped rather than guessed at; the caller reports the
     count so a paste that mostly failed cannot look like a paste that mostly worked.
     """
+    yahoo = parse_yahoo_results(text)
+    if yahoo:
+        return yahoo
+
     sales: list[RawSale] = []
     for number, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
