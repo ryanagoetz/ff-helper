@@ -109,16 +109,24 @@ class Assistant:
 
         dollars: DollarValues | None = None
         if league.settings.is_auction:
+            # Keepers are priced out of the pool: they are owned, their salaries are no
+            # longer biddable, and their slots are not open. This leaves `inflation`
+            # carrying only live market movement rather than a static keeper correction.
+            kept_keys = {keeper.player_key for keeper in state.keepers}
+            kept_salary = sum(keeper.cost or 0 for keeper in state.keepers)
             dollars = compute_par_values(
                 list(valuations.valuations.values()),
                 levels,
                 league.settings,
                 league.num_teams,
+                kept_player_keys=kept_keys,
+                kept_salary=kept_salary,
             )
+            biddable = league.num_teams * league.settings.auction_budget - kept_salary
             notes.append(
-                f"Auction league: ${league.settings.auction_budget} budget, "
-                f"${dollars.dollars_per_vor:.2f} per point of VOR across "
-                f"{dollars.pool_size} rostered players"
+                f"Auction league: ${biddable} biddable across {dollars.pool_size} open "
+                f"roster spots, ${dollars.dollars_per_vor:.2f} per point of VOR"
+                + (f" ({len(kept_keys)} keepers priced out)" if kept_keys else "")
             )
 
         return cls(

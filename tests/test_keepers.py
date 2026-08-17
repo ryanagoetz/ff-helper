@@ -17,6 +17,7 @@ import pytest
 from ff_helper.assistant import Assistant
 from ff_helper.draft import keepers
 from ff_helper.draft.state import DraftState
+from ff_helper.engine.auction import MIN_BID, compute_par_values, inflation_factor
 from ff_helper.rankings.players import PlayerRegistry
 from ff_helper.yahoo.models import DraftPick, KeptPlayer
 from ff_helper.yahoo.parse import parse_roster
@@ -344,6 +345,105 @@ class TestKeepersOnTheBoard:
         assistant, state = snake_state(kept)
         assert state.rounds >= 1
         assert assistant.recommendations(limit=3)
+
+
+class TestKeeperAwarePricing:
+    """Keepers are priced out of the auction pool.
+
+    The point of this is *not* to change the numbers. ``par - 1`` is exactly
+    ``VOR * dollars_per_vor``, so keepers distort one scalar, and ``inflation_factor``
+    cancels that same scalar precisely -- the final values were identical either way. What
+    excluding them buys is that ``inflation`` stops carrying a static keeper correction on
+    top of live market movement, which is what was eating the clamp headroom.
+    """
+
+    def _with_keepers(self, per_team: int, salary: int):
+        league = auction_league()
+        teams = auction_teams()
+        baseline = Assistant.build(
+            league,
+            DraftState(league=league, teams=teams),
+            build_snapshot(),
+            lock=threading.Lock(),
+        )
+        ranked = sorted(
+            baseline.valuations.valuations.values(), key=lambda v: -baseline.levels.vor(v)
+        )
+        kept = [
+            KeptPlayer(
+                player_key=ranked[index].player_key,
+                team_key=f"461.l.1.t.{index % NUM_TEAMS + 1}",
+                cost=salary,
+            )
+            for index in range(per_team * NUM_TEAMS)
+        ]
+        state = DraftState(league=league, teams=teams)
+        state.apply_keepers(kept)
+        return Assistant.build(league, state, build_snapshot(), lock=threading.Lock()), kept
+
+    def test_pool_size_counts_only_open_spots(self):
+        assistant, kept = self._with_keepers(2, 40)
+        assert assistant.dollars.pool_size == NUM_TEAMS * 15 - len(kept)
+
+    def test_keeper_salaries_leave_the_biddable_money(self):
+        """A keeper's salary is spent, so it cannot also be chasing the remaining players."""
+        plain, _ = self._with_keepers(0, 0)
+        assistant, _ = self._with_keepers(3, 45)
+        # Less money over fewer players, but the players removed are the best ones, so
+        # the rate per point of VOR rises rather than falls.
+        assert assistant.dollars.dollars_per_vor > plain.dollars.dollars_per_vor
+
+    def test_inflation_starts_neutral_instead_of_absorbing_a_keeper_correction(self):
+        """The reason for the change, stated as a test.
+
+        Previously a keeper league opened with inflation well above 1.0 purely because par
+        was computed as if nobody had kept anyone -- at five keepers a team that was 2.44
+        of a 3.0 ceiling, leaving almost no room for real market movement before the clamp
+        truncated the correction and broke it.
+        """
+        for per_team, salary in ((1, 40), (3, 45), (5, 35)):
+            assistant, _ = self._with_keepers(per_team, salary)
+            assert assistant.current_inflation() == pytest.approx(1.0, abs=0.05), (
+                f"{per_team} keepers/team opened at {assistant.current_inflation():.2f}"
+            )
+
+    def test_recommended_bids_are_unchanged_by_the_refactor(self):
+        """The equivalence this rests on: same dollars out, one signal instead of two.
+
+        Recomputing par the old way (keepers left in the pool) and applying the inflation
+        it produces must land on the same adjusted value as pricing keepers out up front.
+        """
+        assistant, kept = self._with_keepers(3, 45)
+        old_style = compute_par_values(
+            list(assistant.valuations.valuations.values()),
+            assistant.levels,
+            assistant.league.settings,
+            NUM_TEAMS,
+        )
+        available = assistant.available()
+        old_inflation = inflation_factor(
+            available,
+            old_style,
+            money_remaining=assistant.state.league_money_remaining(),
+            slots_remaining=assistant.state.league_slots_remaining(),
+        )
+        new_inflation = assistant.current_inflation()
+
+        # Guard against a vacuous test: the two paths must genuinely disagree about the
+        # inflation figure, and agree only after it is applied. If these ever converge,
+        # the assertions below would pass without proving anything.
+        assert old_inflation > new_inflation * 1.05
+
+        for valuation in sorted(available, key=lambda v: -assistant.levels.vor(v))[:10]:
+            key = valuation.player_key
+            old_value = MIN_BID + (old_style.value_of(key) - MIN_BID) * old_inflation
+            new_value = MIN_BID + (assistant.dollars.value_of(key) - MIN_BID) * new_inflation
+            assert new_value == pytest.approx(old_value, abs=0.01)
+
+    def test_a_league_with_no_keepers_is_untouched(self):
+        assistant, _ = self._with_keepers(0, 0)
+        assert assistant.dollars.pool_size == NUM_TEAMS * 15
+        assert assistant.current_inflation() == pytest.approx(1.0, abs=0.05)
 
 
 class TestAuctionKeepers:

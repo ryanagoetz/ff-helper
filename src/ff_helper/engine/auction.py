@@ -61,26 +61,48 @@ def compute_par_values(
     levels: ReplacementLevels,
     settings: LeagueSettings,
     num_teams: int,
+    *,
+    kept_player_keys: set[str] | None = None,
+    kept_salary: int = 0,
 ) -> DollarValues:
     """Convert VOR into dollars for the draftable pool.
 
-    Only the players who will actually be rostered matter. Spreading the league's money
-    across every player in the database would price the studs far too low, because most
-    of that database is never bought.
+    Only the players who will actually be *bought* matter -- three ways. Spreading the
+    league's money across every player in the database would price the studs far too low,
+    because most of that database is never bought. Equally, keepers are already owned: they
+    occupy no biddable slot, their salaries are no longer biddable money, and their VOR
+    does not belong in the denominator.
+
+    Excluding keepers here does not change what the app recommends. ``par - 1`` is exactly
+    ``VOR * dollars_per_vor``, so keepers distort a single scalar, and ``inflation_factor``
+    -- remaining money over remaining par surplus -- scales by that same scalar and cancels
+    it precisely. Verified identical to the cent at one, three and five keepers per team.
+
+    It is worth doing anyway, because that cancellation costs something real: it spends the
+    inflation clamp. With keepers in the pool the correction rides inside ``inflation``, so
+    a league keeping five per team starts at 2.44 of a 3.0 ceiling, leaving only 1.23x of
+    headroom before genuine market movement gets truncated -- and once it clamps, the
+    cancellation breaks. Pricing keepers out here leaves ``inflation`` carrying one signal
+    (is the room overspending or thrifty?) instead of two, which is what its name, its
+    docstring, and the "price level" readout all claim it means.
     """
+    kept = kept_player_keys or set()
     budget = settings.auction_budget
     roster_size = settings.roster_size or 1
-    pool_size = num_teams * roster_size
+    pool_size = max(1, num_teams * roster_size - len(kept))
 
-    ranked = sorted(valuations, key=lambda v: -levels.vor(v))[:pool_size]
+    buyable = [v for v in valuations if v.player_key not in kept]
+    ranked = sorted(buyable, key=lambda v: -levels.vor(v))[:pool_size]
     total_vor = sum(max(0.0, levels.vor(v)) for v in ranked)
 
-    total_money = num_teams * budget
+    total_money = max(0, num_teams * budget - kept_salary)
     reserved = pool_size * MIN_BID
     discretionary = max(0.0, total_money - reserved)
 
     dollars_per_vor = (discretionary / total_vor) if total_vor > 0 else 0.0
 
+    # Keepers still get a par value: they are priced for display and for the record, they
+    # are simply not part of what the remaining money is chasing.
     par = {
         valuation.player_key: MIN_BID + max(0.0, levels.vor(valuation)) * dollars_per_vor
         for valuation in valuations
