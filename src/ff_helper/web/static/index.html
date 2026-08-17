@@ -573,6 +573,12 @@ $("pasteBtn").addEventListener("click", async () => {
   if (res.removed) bits.push(`${res.removed} removed`);
   if (res.unchanged) bits.push(`${res.unchanged} unchanged`);
   let message = bits.join(", ") + ".";
+  if (res.assigned_buyers && res.assigned_buyers.length) {
+    // Their money leaves the room correctly, which is what prices everything; only that
+    // rival's own budget is a guess.
+    message += " New buyers: "
+      + res.assigned_buyers.map(a => `${a.buyer} → ${a.team}`).join(", ") + ".";
+  }
   if (res.assumed && res.assumed.length) {
     // Yahoo abbreviates to a first initial, so these were settled by what the player sold
     // for. Worth a glance: the wrong choice puts money on the wrong player.

@@ -89,6 +89,11 @@ class PastedBoard(BaseModel):
     strict: bool = True
 
 
+def _team_name(assistant: Assistant, team_key: str) -> str:
+    team = next((t for t in assistant.state.teams if t.team_key == team_key), None)
+    return team.name if team else team_key
+
+
 def _resolution_failure(report: bridge.ResolutionReport) -> str:
     """Explain exactly which rows blocked the paste, and why it refused rather than part-applied."""
     problems: list[str] = []
@@ -312,6 +317,10 @@ def create_app(
             "assumed": [
                 {"name": name, "player": assistant._player_name(key)}
                 for name, key in report.assumed
+            ],
+            "assigned_buyers": [
+                {"buyer": buyer, "team": _team_name(assistant, key)}
+                for buyer, key in report.assigned_buyers
             ],
         }
 

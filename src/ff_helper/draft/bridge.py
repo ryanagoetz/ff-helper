@@ -70,6 +70,9 @@ class ResolutionReport:
     # Matches settled by price because the name alone fit more than one player. Surfaced
     # so a wrong guess is visible rather than silently on the board.
     assumed: list[tuple[str, str]] = field(default_factory=list)
+    # Buyers who matched no team and were given a free slot. Their money leaves the room
+    # correctly; only that rival's own budget is a guess.
+    assigned_buyers: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -98,6 +101,9 @@ class BridgeResolver:
         self.teams = teams
         self.values = values or {}
         self._players: dict[tuple[str, str], str | None] = {}
+        # Buyer names with no matching team, given a free slot so their money still
+        # leaves the room. Remembered, so the same name keeps the same slot.
+        self._assigned: dict[str, str] = {}
         self._by_team_name: dict[str, str] = {}
         for team in teams:
             self._by_team_name[_fold(team.name)] = team.team_key
@@ -153,8 +159,47 @@ class BridgeResolver:
         self._players[cache_key] = key
         return key, how
 
-    def resolve_team(self, buyer: str) -> str | None:
-        return self._by_team_name.get(_fold(buyer))
+    def resolve_team(self, buyer: str) -> tuple[str | None, str]:
+        """Returns ``(team_key, how)`` where *how* is exact, assigned, or "".
+
+        A name we have never seen gets given a free team slot rather than blocking the
+        sale, because being sure *which* rival bought a player matters far less than it
+        looks. ``league_money_remaining`` sums what is left across the twelve slots, so as
+        long as a sale lands on some real slot the money leaves the room and inflation
+        stays honest -- and inflation is what prices everything. Getting the wrong rival
+        only misstates that rival's own budget, which is a display detail.
+
+        Refusing instead would mean a team that renamed itself mid-draft, or joined late,
+        silently stopped counting against the pool -- which overstates the money chasing
+        the remaining players and inflates every price the board quotes. Adapting is the
+        safer failure.
+
+        Your own team is never assigned this way. It is pinned by name, by alias, and by
+        Yahoo's own "Your Team" label, because your budget and max bid are the numbers the
+        app exists to produce and a wrong slot there is not a display detail.
+        """
+        folded = _fold(buyer)
+        known = self._by_team_name.get(folded)
+        if known:
+            return known, "exact"
+        if not folded:
+            return None, ""
+
+        assigned = self._assigned.get(folded)
+        if assigned:
+            return assigned, "assigned"
+
+        taken = set(self._assigned.values())
+        for team in self.teams:
+            if team.is_mine or team.team_key in taken:
+                continue
+            # A slot whose own name has already been matched belongs to that name.
+            if self._by_team_name.get(_fold(team.name)) in taken:
+                continue
+            self._assigned[folded] = team.team_key
+            return team.team_key, "assigned"
+
+        return None, ""
 
     def resolve_all(self, sales: list[RawSale], *, is_auction: bool) -> ResolutionReport:
         report = ResolutionReport()
@@ -173,10 +218,12 @@ class BridgeResolver:
                 if sale.cost is None:
                     report.missing_price.append(sale)
                     continue
-                team_key = self.resolve_team(sale.buyer) or ""
+                team_key, placed = self.resolve_team(sale.buyer)
                 if not team_key:
                     report.unknown_buyers.append(sale)
                     continue
+                if placed == "assigned":
+                    report.assigned_buyers.append((sale.buyer, team_key))
 
             report.resolved.append((sale, player_key, team_key))
         return report

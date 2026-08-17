@@ -152,14 +152,34 @@ class TestResolution:
     def _resolver(self, assistant):
         return BridgeResolver(assistant.registry, assistant.state.teams)
 
-    def test_an_unresolvable_buyer_is_never_written(self, assistant):
-        """Money charged to no team never leaves the room and overstates every price."""
+    def test_an_unknown_buyer_gets_a_free_slot_rather_than_blocking(self, assistant):
+        """A renamed or late-joining team must not stop its money leaving the room."""
         report = self._resolver(assistant).resolve_all(
             [RawSale(name="RB Player0", cost=50, buyer="Nobody's Team")], is_auction=True
         )
-        assert report.resolved == []
-        assert len(report.unknown_buyers) == 1
-        assert not report.ok
+        assert len(report.resolved) == 1
+        assert report.unknown_buyers == []
+        assert len(report.assigned_buyers) == 1
+
+    def test_an_assigned_buyer_keeps_the_same_slot(self, assistant):
+        resolver = self._resolver(assistant)
+        first, _ = resolver.resolve_team("Nobody's Team")
+        second, how = resolver.resolve_team("Nobody's Team")
+        assert first == second
+        assert how == "assigned"
+
+    def test_two_unknown_buyers_get_different_slots(self, assistant):
+        resolver = self._resolver(assistant)
+        one, _ = resolver.resolve_team("Stranger One")
+        two, _ = resolver.resolve_team("Stranger Two")
+        assert one != two
+
+    def test_your_own_team_is_never_handed_out(self, assistant):
+        """Your budget and max bid are the numbers the app exists to produce."""
+        resolver = self._resolver(assistant)
+        mine = next(t.team_key for t in assistant.state.teams if t.is_mine)
+        handed = {resolver.resolve_team(f"Stranger {i}")[0] for i in range(30)}
+        assert mine not in handed
 
     def test_a_missing_price_is_refused(self, assistant):
         report = self._resolver(assistant).resolve_all(
@@ -179,7 +199,7 @@ class TestResolution:
         resolver = self._resolver(assistant)
         target = assistant.state.teams[1]
         for spelling in (target.name, target.name.upper(), f"  {target.name} 🏆 "):
-            assert resolver.resolve_team(spelling) == target.team_key
+            assert resolver.resolve_team(spelling) == (target.team_key, "exact")
 
     def test_an_alias_resolves_a_room_specific_spelling(self, assistant):
         target = assistant.state.teams[1]
@@ -188,7 +208,7 @@ class TestResolution:
             assistant.state.teams,
             team_aliases={"Some Room Name": target.name},
         )
-        assert resolver.resolve_team("Some Room Name") == target.team_key
+        assert resolver.resolve_team("Some Room Name") == (target.team_key, "exact")
 
     def test_negative_lookups_are_cached(self, assistant):
         """An unmatchable name otherwise costs a full fuzzy scan on every reading."""

@@ -140,8 +140,7 @@ disk.
 
 ## Job C — run the bridge against a mock
 
-Six steps. **Run one app at a time, always on port 8777**, so the userscript never needs
-editing.
+Three steps. No league to build, no team names to discover.
 
 ### 0. Once, before the mock: put the token in the script
 
@@ -149,71 +148,62 @@ editing.
 uv run python -c "import sys;sys.path.insert(0,'src');from ff_helper.config import bridge_token;print(bridge_token())"
 ```
 
-Open the Tampermonkey script and set `TOKEN` to that value. It does not change, so this is
-a one-time step. Leave `PORT` at 8777.
+Set `TOKEN` in the Tampermonkey script to that. It never changes, so this is a one-time
+step. Leave `PORT` at 8777.
 
-### 1. Join a mock auction and let a few players sell
+### 1. Start the app on the throwaway mock league
 
-Five or six is enough.
-
-### 2. Copy the draft-results panel
-
-Click in it, Ctrl+A, Ctrl+C.
-
-### 3. Build a league that matches the room
-
-```bash
-uv run python scripts/mock_config.py --num-teams 12
-```
-
-It waits for you to paste. Paste, then press **Ctrl+D**. It reads the buyers out of the
-text and writes `data/league-mock.yaml`, borrowing your real player pool so there is
-nothing to download. Check `Your Team` is marked as you.
-
-### 4. Stop the Bust A Move app, start the mock one
+Stop the Bust A Move one first — **one app at a time on 8777**, so the script never needs
+editing.
 
 ```bash
 uv run ff-helper --offline data/league-mock.yaml --bridge
 ```
 
-Opens on 8777 as usual. `--bridge` is what lets the draft room talk to it.
+`data/league-mock.yaml` is a generic 12-team $200 auction with placeholder team names.
+You do not need to fix those: a buyer the app has never seen claims a free slot as it
+appears, so the money still leaves the room. Only `Your Team` is pinned, and Yahoo always
+labels your own team that way.
 
-### 5. Reload the draft room tab
+### 2. Join a mock auction and reload the tab
 
-The userscript runs on load. A badge appears bottom-right:
+The script runs on page load. Once a few players sell, a badge appears bottom-right:
 
 ```
 ff-helper: 16 read, 16 new · 14:32
 ```
 
-That is it working. Leave it; it re-reads every four seconds and only posts when something
-changed. Click the badge to pause.
+Click it to pause.
 
-### What each badge colour means
+### 3. Check it agrees with the room
+
+Open http://127.0.0.1:8777 next to Yahoo. Sold players gone from the board, money in the
+room down by the total spent, and your own budget matching what "Your Team" has bought.
+**That comparison is the real test** — a green badge only means text was accepted, not
+that it was read correctly.
+
+### What the badge means
 
 | Badge | Meaning |
 |---|---|
 | green, counts rising | working |
-| `no sales on screen yet` | nothing sold, or the panel is not on screen — scroll it into view |
-| `cannot reach ff-helper` | the app is not running, or was started without `--bridge` |
-| `REFUSED — ... buyer ...` | a team joined or renamed after step 3. Redo steps 2–4. |
-| amber, `n skipped` | some sales did not match a player; the rest went in. Check the console. |
-
-### Then check it actually agrees with the room
-
-Open http://127.0.0.1:8777 and compare against Yahoo: the players sold should be gone from
-the board, money in the room should equal $200 × teams minus everything spent, and your own
-budget should match what "Your Team" has spent. **That comparison is the real test** — a
-green badge only means text was accepted, not that it was read correctly.
+| `no sales on screen yet` | nothing sold yet, or the results panel is not on screen |
+| `cannot reach ff-helper` | app not running, or started without `--bridge` |
+| amber, `n skipped` | some sales matched no player; the rest went in. Check the console. |
+| `REFUSED` | something the reader will not guess at. The message says what. |
 
 ### When you are done
 
-Ctrl+C the mock app. Nothing was written to disk, and `data/league-mock.yaml` is throwaway.
-Start the real one again with:
+Ctrl+C, then start the real one again:
 
 ```bash
 uv run ff-helper --offline data/league-bustamove.yaml --bridge
 ```
+
+Nothing was written to disk.
+
+> `scripts/mock_config.py` still exists for building a league with the room's real team
+> names, which makes the roster panel readable. It is optional now, not a prerequisite.
 
 ---
 
