@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import secrets
 import threading
 import time
 import webbrowser
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -30,6 +32,10 @@ from ff_helper.rankings.players import PlayerRegistry
 from ff_helper.yahoo.client import YahooClient
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+# The one origin the draft-room reader can run from. Not "*": this endpoint moves money
+# around a live draft board, and a wildcard would let any page you have open write to it.
+YAHOO_ORIGIN = "https://football.fantasysports.yahoo.com"
 
 
 def _serialize(pick, is_auction: bool) -> dict:
@@ -114,8 +120,20 @@ class ManualPick(BaseModel):
     team_key: str | None = None
 
 
-def create_app(assistant: Assistant, sync: DraftSync | None) -> FastAPI:
+def create_app(
+    assistant: Assistant, sync: DraftSync | None, bridge_token: str = ""
+) -> FastAPI:
     app = FastAPI(title="ff-helper", docs_url=None, redoc_url=None)
+
+    if bridge_token:
+        # Only when asked for. Without --bridge the app is reachable from nothing but its
+        # own page, which is the right default for something that holds your draft.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=[YAHOO_ORIGIN],
+            allow_methods=["POST"],
+            allow_headers=["Content-Type", "X-Bridge-Token"],
+        )
 
     # Built once and kept: the resolver memoizes every name it has looked up, including
     # the ones it failed to match. Rebuilding per request would throw that away and pay
@@ -215,7 +233,7 @@ def create_app(assistant: Assistant, sync: DraftSync | None) -> FastAPI:
         return {"pick": entry.pick, "player_key": entry.player_key, "cost": entry.cost}
 
     @app.post("/api/board/paste")
-    def paste_board(body: PastedBoard) -> dict:
+    def paste_board(body: PastedBoard, request: Request) -> dict:
         """Ingest a full reading of the draft room, pasted from the Yahoo tab.
 
         Same origin as the app, so this needs no CORS, no browser-policy exemption and no
@@ -226,6 +244,22 @@ def create_app(assistant: Assistant, sync: DraftSync | None) -> FastAPI:
         looking at the result, so refusing with a specific complaint is more useful than
         applying nine of ten sales and burying the tenth in a notes list.
         """
+        # A request carrying an Origin that is not this app's own page came from the
+        # draft room, and must present the token printed at startup. The app's own UI is
+        # same-origin and needs nothing.
+        origin = request.headers.get("origin", "")
+        external = bool(origin) and not origin.startswith(
+            ("http://127.0.0.1", "http://localhost")
+        )
+        if external and (
+            not bridge_token or request.headers.get("x-bridge-token") != bridge_token
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="Bad or missing bridge token. Start ff-helper with --bridge and "
+                "copy the token it prints into the reader script.",
+            )
+
         sales = bridge.parse_paste(body.text)
         if not sales:
             raise HTTPException(
@@ -439,7 +473,16 @@ def main() -> None:
         "by hand and there is no live feed. Use when API approval has not arrived.",
     )
     parser.add_argument("--port", type=int, default=8777, help="Port to serve on.")
+    parser.add_argument(
+        "--bridge",
+        action="store_true",
+        help="Accept readings posted from the Yahoo draft room, and print the token the "
+        "reader script needs. Off by default: without it the board is reachable only "
+        "from this app's own page.",
+    )
     args = parser.parse_args()
+
+    token = secrets.token_urlsafe(12) if args.bridge else ""
 
     sync: DraftSync | None
     if args.offline:
@@ -457,10 +500,14 @@ def main() -> None:
 
         sync.start()
 
-    app = create_app(assistant, sync)
+    app = create_app(assistant, sync, bridge_token=token)
 
     url = f"http://127.0.0.1:{args.port}"
     print(f"\n  ff-helper ready at {url}")
+    if token:
+        print(f"  bridge token: {token}")
+        print("     paste scripts/yahoo_bridge_console.js into the draft room console,")
+        print(f"     with TOKEN set to that and PORT set to {args.port}.")
     print(f"  {assistant.league.name} -- {len(assistant.valuations.valuations)} players valued")
     if assistant.state.my_slot:
         upcoming = ", ".join(str(pick) for pick in assistant.state.my_picks[:6])

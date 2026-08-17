@@ -174,9 +174,23 @@ drop by what "Your Team" bought.
 
 ### 4. Then try the automated reader
 
-Install [Tampermonkey](https://www.tampermonkey.net/), create a new script, and paste in
-`scripts/yahoo_bridge.user.js`. Change the port in it to **8779** for the mock. Reload the
-draft room; a badge appears bottom-right.
+Two ways; the console one needs nothing installed.
+
+**Console (no extension).** Restart the mock app with `--bridge`:
+
+```bash
+uv run ff-helper --offline data/league-mock.yaml --port 8779 --bridge
+```
+
+It prints a token. Open the draft room, press F12 for the console, and paste in
+`scripts/yahoo_bridge_console.js` with `TOKEN` set to that value and `PORT` to 8779. Stop
+it with `ffStop()`. It dies on a page reload, so re-paste after one.
+
+**Tampermonkey (survives reloads).** Install the extension, create a new script, paste in
+`scripts/yahoo_bridge.user.js`, and change the port to 8779. No token needed — it does not
+go through the browser's CORS machinery at all.
+
+Either way a badge appears bottom-right.
 
 Watch for: does it read the panel without you doing anything, does the badge count go up
 as players sell, and does the board in ff-helper match the room? Click the badge to pause.

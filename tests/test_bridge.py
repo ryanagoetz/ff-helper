@@ -397,3 +397,57 @@ class TestWholePageNoise:
 
     def test_a_number_with_no_price_after_it_is_ignored(self):
         assert parse_paste("7\nSome Heading\nMore Text\nAnd More\n") == []
+
+
+class TestBridgeTokenGate:
+    """Opening the board to the draft room must not open it to every page you have open."""
+
+    def _client(self, assistant, token=""):
+        from fastapi.testclient import TestClient
+
+        from ff_helper.web.app import create_app
+
+        return TestClient(create_app(assistant, None, bridge_token=token))
+
+    def _body(self):
+        return {"text": (FIXTURES / "yahoo_draft_results.txt").read_text(), "strict": False}
+
+    YAHOO = "https://football.fantasysports.yahoo.com"
+
+    def test_the_apps_own_page_needs_no_token(self, assistant):
+        client = self._client(assistant, token="secret")
+        res = client.post(
+            "/api/board/paste", json=self._body(), headers={"Origin": "http://127.0.0.1:8777"}
+        )
+        assert res.status_code != 401
+
+    def test_no_origin_at_all_needs_no_token(self, assistant):
+        """The UI's own fetch, and anything driving the API locally."""
+        client = self._client(assistant, token="secret")
+        assert client.post("/api/board/paste", json=self._body()).status_code != 401
+
+    def test_the_draft_room_needs_the_token(self, assistant):
+        client = self._client(assistant, token="secret")
+        res = client.post(
+            "/api/board/paste",
+            json=self._body(),
+            headers={"Origin": self.YAHOO, "X-Bridge-Token": "secret"},
+        )
+        assert res.status_code != 401
+
+    def test_a_wrong_token_is_refused(self, assistant):
+        client = self._client(assistant, token="secret")
+        res = client.post(
+            "/api/board/paste",
+            json=self._body(),
+            headers={"Origin": self.YAHOO, "X-Bridge-Token": "wrong"},
+        )
+        assert res.status_code == 401
+
+    def test_without_bridge_mode_no_external_origin_may_post(self, assistant):
+        """Default is closed: the board is reachable from its own page and nowhere else."""
+        client = self._client(assistant, token="")
+        res = client.post(
+            "/api/board/paste", json=self._body(), headers={"Origin": self.YAHOO}
+        )
+        assert res.status_code == 401
