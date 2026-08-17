@@ -75,6 +75,34 @@ class ProjectionsError(ValueError):
     """The file could not be read as projections. Loud on purpose."""
 
 
+def resolve_path(
+    data_dir: Path, league_key: str, explicit: Path | None = None
+) -> tuple[Path | None, bool]:
+    """Find the projections file for a league. Returns ``(path, is_league_specific)``.
+
+    Per-league naming is not tidiness. An export carrying only a points total was scored
+    under one league's settings before it ever reached us, so pointing the auction league
+    at the snake league's file produces numbers that are wrong in a way nothing
+    downstream can detect -- not the crosswalk, not the coverage report, not the board.
+    Keying the filename to the league key makes that mix-up impossible rather than merely
+    discouraged.
+
+    A per-stat export has no such problem, which is why the shared fallback exists at all.
+    """
+    if explicit is not None:
+        return explicit, True
+
+    keyed = data_dir / f"projections-{league_key.replace('/', '_')}.csv"
+    if keyed.exists():
+        return keyed, True
+
+    shared = data_dir / "projections.csv"
+    if shared.exists():
+        return shared, False
+
+    return None, False
+
+
 def _normalize_header(raw: str | None) -> str:
     """Fold a header into a comparable key: lowercase, no spaces, dots, or slashes."""
     cleaned = (raw or "").strip().lower()

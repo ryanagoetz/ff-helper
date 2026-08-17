@@ -204,8 +204,28 @@ league's modifiers — that's what makes the numbers yours instead of the export
 points-only file (`fpts`) still works and says so in the run notes. If your provider lets
 you set league scoring before exporting, do that and either shape is fine.
 
-Without `--projections` the FantasyPros scrape is still attempted, and fails loudly when
-it gets the teaser rather than caching ten players as though they were a draft board.
+Put exports in `data/`, named for the league they belong to, and no flag is needed:
+
+```
+data/projections-461.l.111111.csv     # snake league
+data/projections-461.l.222222.csv     # auction league
+```
+
+`data/projections.csv` is the fallback when no league-specific file exists.
+
+**Name the file for its league if your export is points-only.** A points total has
+already been scored under whichever league's settings were active when you exported it,
+and there is nothing left for the app to re-score. Loading the snake league's file into
+the auction league then produces a full board of plausible numbers computed under the
+wrong rules, which no coverage check can detect. `fetch_rankings.py` warns when it falls
+back to a shared file carrying pre-scored points, and records which file it used in the
+snapshot notes. Per-stat exports are immune to this and can be shared across leagues.
+
+Everything in `data/` is gitignored except its README — a subscriber export is not yours
+to redistribute.
+
+Without a projections file the FantasyPros scrape is still attempted, and fails loudly
+when it gets the teaser rather than caching ten players as though they were a draft board.
 
 Read the coverage report it prints. A player who fails to match across sources is silently
 absent from every recommendation and you'd never notice — so the script names everyone who

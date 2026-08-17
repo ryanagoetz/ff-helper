@@ -49,6 +49,10 @@ from ff_helper.yahoo.client import YahooClient  # noqa: E402
 MIN_TOP_COVERAGE = 0.90
 TOP_N = 200
 
+# Where projection exports live when --projections is not passed. Gitignored, because a
+# subscriber export is not ours to redistribute.
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -60,9 +64,9 @@ def main() -> int:
     parser.add_argument(
         "--projections",
         type=Path,
-        help="CSV of per-stat season projections, e.g. exported from a 4for4 "
-        "subscription. Replaces the FantasyPros projections scrape, which now only "
-        "serves a ten-row teaser to signed-out callers.",
+        help="CSV of season projections, e.g. exported from a 4for4 subscription. "
+        "Defaults to data/projections-<league key>.csv, then data/projections.csv. "
+        "Replaces the FantasyPros scrape, which now serves only a ten-row teaser.",
     )
     args = parser.parse_args()
 
@@ -113,21 +117,40 @@ def main() -> int:
     # A supplied CSV replaces the scrape outright rather than blending with it. Two
     # projection sets for one player would double-count him in the crosswalk, and the
     # file you exported deliberately should win over a page that may be a teaser.
-    if args.projections:
+    projections_path, league_specific = projections_csv.resolve_path(
+        DATA_DIR, league_key, args.projections
+    )
+    if projections_path is not None:
         try:
-            print(f"Reading projections from {args.projections} ...")
-            projection_rows = projections_csv.load(args.projections)
+            print(f"Reading projections from {projections_path} ...")
+            projection_rows = projections_csv.load(projections_path)
             rows.extend(projection_rows)
             with_stats = sum(1 for row in projection_rows if row.stats)
             print(f"  {len(projection_rows)} players, {with_stats} with per-stat lines")
+            notes.append(f"Projections from {projections_path.name}")
+
             if not with_stats:
                 # Points-only still works, but it bakes in the exporter's scoring rather
                 # than the league's, so it must not pass silently.
                 notes.append(
-                    f"{args.projections.name} has no per-stat columns, so projections "
+                    f"{projections_path.name} has no per-stat columns, so projections "
                     "keep whatever scoring they were exported under instead of being "
                     "re-scored under your league settings."
                 )
+                if not league_specific:
+                    # The dangerous combination: numbers already scored under some
+                    # league's rules, from a file not tied to *this* league.
+                    print(
+                        f"\n  WARNING: {projections_path.name} carries points with no "
+                        "stats to re-score,\n  and is not named for this league. If it "
+                        "was exported under another league's\n  scoring, every value "
+                        "here is wrong and nothing downstream can tell.\n  Rename it to "
+                        f"projections-{league_key}.csv to tie it to this league.\n"
+                    )
+                    notes.append(
+                        f"{projections_path.name} is a shared file, not named for "
+                        f"{league_key}, and carries pre-scored points."
+                    )
         except Exception as exc:  # noqa: BLE001
             print(f"  FAILED: {exc}")
             return 1

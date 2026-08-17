@@ -15,3 +15,7 @@ build/
 # Projection and keeper CSVs. Exports from a paid subscription are not ours to
 # redistribute, and this repo is public.
 *.csv
+
+# ...but keep the data/ directory itself, and its README.
+!data/.gitkeep
+!data/README.md

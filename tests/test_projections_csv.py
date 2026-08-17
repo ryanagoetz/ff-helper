@@ -11,7 +11,12 @@ import httpx
 import pytest
 
 from ff_helper.rankings.sources import fantasypros
-from ff_helper.rankings.sources.projections_csv import MIN_ROWS, ProjectionsError, load
+from ff_helper.rankings.sources.projections_csv import (
+    MIN_ROWS,
+    ProjectionsError,
+    load,
+    resolve_path,
+)
 
 HEADER = "player,pos,team,pass_yds,pass_td,int,rush_yds,rush_td,rec,rec_yds,rec_td,fum_lost"
 
@@ -126,6 +131,51 @@ class TestLoudFailures:
     def test_empty_file(self, tmp_path):
         with pytest.raises(ProjectionsError, match="no projections"):
             load(_write(tmp_path, HEADER))
+
+
+class TestPathResolution:
+    """Which file a league gets, and whether it was chosen for that league specifically."""
+
+    SNAKE = "461.l.111111"
+    AUCTION = "461.l.222222"
+
+    def test_league_specific_file_wins(self, tmp_path):
+        (tmp_path / f"projections-{self.SNAKE}.csv").write_text("x")
+        (tmp_path / "projections.csv").write_text("x")
+        path, specific = resolve_path(tmp_path, self.SNAKE)
+        assert path.name == f"projections-{self.SNAKE}.csv"
+        assert specific is True
+
+    def test_each_league_gets_its_own_file(self, tmp_path):
+        """The mix-up this naming exists to prevent."""
+        (tmp_path / f"projections-{self.SNAKE}.csv").write_text("x")
+        (tmp_path / f"projections-{self.AUCTION}.csv").write_text("x")
+        snake, _ = resolve_path(tmp_path, self.SNAKE)
+        auction, _ = resolve_path(tmp_path, self.AUCTION)
+        assert snake != auction
+
+    def test_shared_fallback_is_flagged_as_not_league_specific(self, tmp_path):
+        (tmp_path / "projections.csv").write_text("x")
+        path, specific = resolve_path(tmp_path, self.SNAKE)
+        assert path.name == "projections.csv"
+        assert specific is False
+
+    def test_explicit_path_overrides_everything(self, tmp_path):
+        (tmp_path / f"projections-{self.SNAKE}.csv").write_text("x")
+        chosen = tmp_path / "somewhere-else.csv"
+        path, specific = resolve_path(tmp_path, self.SNAKE, chosen)
+        assert path == chosen
+        assert specific is True
+
+    def test_nothing_found(self, tmp_path):
+        path, specific = resolve_path(tmp_path, self.SNAKE)
+        assert path is None
+        assert specific is False
+
+    def test_a_league_without_its_own_file_does_not_borrow_another_leagues(self, tmp_path):
+        (tmp_path / f"projections-{self.SNAKE}.csv").write_text("x")
+        path, _ = resolve_path(tmp_path, self.AUCTION)
+        assert path is None
 
 
 class TestFantasyProsTeaserGuard:
