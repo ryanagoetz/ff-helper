@@ -161,9 +161,25 @@ class TestPlayerPool:
         players = offline.players_from_rows(self._rows(), "offline.l.1")
         assert [p.full_name for p in players] == ["Jahmyr Gibbs", "Josh Allen", "No ADP Guy"]
 
-    def test_adp_is_carried_as_draft_analysis(self):
+    def test_draft_analysis_is_left_empty(self):
+        """Otherwise the export's ADP is re-emitted as Yahoo's and weighted 0.65.
+
+        yahoo_adp.from_players turns draft_analysis into a source row carrying the
+        heaviest weight in the ADP blend. Offline that would be this same CSV's ADP
+        counted twice -- once as itself at 0.2, once wearing Yahoo's hat at 0.65 --
+        drowning out FFC, the only genuinely independent ADP left.
+        """
         players = offline.players_from_rows(self._rows(), "offline.l.1")
-        assert players[0].draft_analysis.average_pick == 1.0
+        assert all(p.draft_analysis.average_pick is None for p in players)
+
+    def test_the_export_adp_still_reaches_the_blend_as_its_own_source(self):
+        from ff_helper.rankings.sources import yahoo_adp
+
+        players = offline.players_from_rows(self._rows(), "offline.l.1")
+        synthesized = yahoo_adp.from_players(players)
+        assert all(row.adp is None for row in synthesized)
+        # The CSV SourceRow itself is what carries ADP into blend().
+        assert any(row.adp == 1.0 for row in self._rows())
 
     def test_positions_survive(self):
         players = offline.players_from_rows(self._rows(), "offline.l.1")

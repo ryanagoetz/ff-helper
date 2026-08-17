@@ -33,7 +33,6 @@ import yaml
 from ff_helper.rankings.players import SourceRow, normalize_position, normalize_team
 from ff_helper.yahoo.models import (
     PROJECTION_STAT_IDS,
-    DraftAnalysis,
     League,
     LeagueSettings,
     RosterSlot,
@@ -224,10 +223,13 @@ def players_from_rows(rows: list[SourceRow], league_key: str) -> list[YahooPlaye
                 team_abbr=normalize_team(row.team),
                 display_position=position,
                 eligible_positions=(position,) if position else (),
-                draft_analysis=DraftAnalysis(
-                    average_pick=row.adp,
-                    average_cost=row.auction_cost,
-                ),
+                # draft_analysis is left empty on purpose. ``yahoo_adp.from_players``
+                # turns it into a source row weighted 0.65 as Yahoo's own ADP -- the
+                # heaviest weight in the blend, justified online because Yahoo describes
+                # drafts on the platform you are drafting on. Offline it would be this
+                # same CSV's ADP wearing Yahoo's hat, counted a second time at more than
+                # triple the weight of its own row. The export's ADP already reaches the
+                # blend as the csv source; there is no Yahoo here to speak for.
             )
         )
     return players
@@ -280,9 +282,8 @@ def supplement_positions(
                 team_abbr=normalize_team(row.team),
                 display_position=position,
                 eligible_positions=(position,),
-                draft_analysis=DraftAnalysis(
-                    average_pick=row.adp, average_cost=row.auction_cost
-                ),
+                # Empty for the same reason as in players_from_rows: the source row this
+                # was built from already carries its own ADP into the blend.
             )
         )
 
