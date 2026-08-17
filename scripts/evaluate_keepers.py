@@ -45,6 +45,8 @@ from ff_helper.yahoo.models import League  # noqa: E402
 _PLAYER_COLUMNS = ("player", "name", "player_name")
 _COST_COLUMNS = ("cost", "salary", "price", "auction_cost", "keeper_cost")
 _ROUND_COLUMNS = ("round", "round_cost", "pick")
+_ROOKIE_COLUMNS = ("rookie", "is_rookie", "rookie_exempt")
+_TRUTHY = {"y", "yes", "true", "1", "rookie", "x"}
 
 
 class CandidateError(ValueError):
@@ -63,6 +65,8 @@ class Candidate:
     benchmark: str = ""
     value_rank: int | None = None
     adp_rank: int | None = None
+    rookie: bool = False
+    ineligible: str = ""
 
     @property
     def market_gap(self) -> int | None:
@@ -100,7 +104,15 @@ def read_candidates(path: Path) -> list[Candidate]:
                 keeper_round = int(float(raw_round)) if raw_round else None
             except ValueError as exc:
                 raise CandidateError(f"{name}: could not read cost/round ({exc})") from exc
-            rows.append(Candidate(name=name, cost=cost, round=keeper_round))
+            rookie_cell = (_column(row, _ROOKIE_COLUMNS) or "").strip().lower()
+            rows.append(
+                Candidate(
+                    name=name,
+                    cost=cost,
+                    round=keeper_round,
+                    rookie=rookie_cell in _TRUTHY,
+                )
+            )
 
     if not rows:
         raise CandidateError(
@@ -127,6 +139,13 @@ def main() -> int:
         type=int,
         help="How many players your league lets you keep. Without it, every player with "
         "positive surplus is treated as keepable.",
+    )
+    parser.add_argument(
+        "--max-cost",
+        type=float,
+        metavar="N",
+        help="Eligibility cap: only players who cost N or less can be kept. A 'rookie' "
+        "column in the candidates CSV exempts a player from the cap.",
     )
     args = parser.parse_args()
 
@@ -198,6 +217,18 @@ def main() -> int:
         candidate.value_rank = value_rank.get(player.player_key)
         candidate.adp_rank = adp_rank.get(player.player_key)
 
+    # Eligibility is applied before any ranking, so an ineligible player can never be
+    # recommended. Being told to keep someone the rules forbid is worse than useless: it
+    # costs you the slot you actually had.
+    if args.max_cost is not None:
+        for candidate in candidates:
+            if candidate.rookie or candidate.cost is None:
+                continue
+            if candidate.cost > args.max_cost:
+                candidate.ineligible = (
+                    f"${candidate.cost:,.0f} is over the ${args.max_cost:,.0f} cap"
+                )
+
     unmatched = [c for c in candidates if c.valuation is None]
 
     if league.settings.is_auction:
@@ -217,7 +248,9 @@ def main() -> int:
 def _report_auction(
     candidates: list[Candidate], league: League, slots: int | None = None
 ) -> None:
-    priced = [c for c in candidates if c.valuation is not None and c.par is not None]
+    valued = [c for c in candidates if c.valuation is not None and c.par is not None]
+    barred = [c for c in valued if c.ineligible]
+    priced = [c for c in valued if not c.ineligible]
     for candidate in priced:
         if candidate.cost is not None:
             candidate.surplus = candidate.par - candidate.cost
@@ -277,6 +310,20 @@ def _report_auction(
                 "surplus is\n  this large, but it leaves the rest of the roster to be "
                 "bought cheaply -- and\n  everyone else's money is still chasing the "
                 "players you did not keep."
+            )
+
+    if barred:
+        print("\n  Not eligible under your league's keeper rules:")
+        for candidate in sorted(barred, key=lambda c: -(c.par or 0)):
+            forgone = (
+                f"${candidate.par - candidate.cost:+,.0f}"
+                if candidate.cost is not None
+                else "--"
+            )
+            print(
+                f"    {candidate.valuation.name:22s} ${candidate.cost:,.0f} -> "
+                f"${candidate.par:,.0f}  ({forgone} of surplus you cannot have) "
+                f"-- {candidate.ineligible}"
             )
 
     unpriced = [c for c in priced if c.cost is None]
