@@ -177,12 +177,35 @@ The script then prints your leagues. Paste the right `FF_LEAGUE_KEY` into `.env`
 ### 5. Build the ranking snapshot
 
 ```bash
-uv run python scripts/fetch_rankings.py
+uv run python scripts/fetch_rankings.py --projections 4for4-projections.csv
 ```
 
 This pulls the Yahoo player pool, FantasyFootballCalculator ADP, and FantasyPros consensus
-rankings and projections, then caches everything to `~/.ff-helper/cache/`. **Re-run it the
-day before your draft** so draft morning doesn't depend on the network.
+rankings, reads projections from the CSV, then caches everything to `~/.ff-helper/cache/`.
+**Re-run it the day before your draft** so draft morning doesn't depend on the network.
+
+**Projections come from a CSV export, not a scrape.** FantasyPros put full projections
+behind a registration fence and now serves ten rows per position to signed-out callers —
+enough to parse, nowhere near enough to derive replacement level from, which is exactly
+the kind of quiet wrongness that ends up in a recommendation. Export projections from
+whatever you subscribe to (4for4, or anything that emits a CSV) and pass the file.
+
+Only a `player` column is required; positions, teams, and extra columns are optional and
+extras are ignored. Column names are flexible — `Name`/`Rushing Yards`/`Receptions` work
+as well as `player`/`rush_yds`/`rec`.
+
+```csv
+player,pos,team,pass_yds,pass_td,int,rush_yds,rush_td,rec,rec_yds,rec_td,fum_lost
+Ja'Marr Chase,WR,CIN,0,0,0,4,0,112,1408,12,1
+```
+
+**Per-stat columns beat a points total**, because the app re-scores stats under your
+league's modifiers — that's what makes the numbers yours instead of the exporter's. A
+points-only file (`fpts`) still works and says so in the run notes. If your provider lets
+you set league scoring before exporting, do that and either shape is fine.
+
+Without `--projections` the FantasyPros scrape is still attempted, and fails loudly when
+it gets the teaser rather than caching ten players as though they were a draft board.
 
 Read the coverage report it prints. A player who fails to match across sources is silently
 absent from every recommendation and you'd never notice — so the script names everyone who

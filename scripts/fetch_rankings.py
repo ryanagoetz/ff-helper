@@ -4,8 +4,17 @@
     python scripts/fetch_rankings.py
 
 Fetches the Yahoo player pool (with Yahoo's own ADP), FantasyFootballCalculator ADP, and
-FantasyPros consensus rankings and projections, then writes everything to
-~/.ff-helper/cache/ so draft day does not depend on the network.
+FantasyPros consensus rankings, then writes everything to ~/.ff-helper/cache/ so draft
+day does not depend on the network.
+
+Projections come from a CSV export instead of a scrape:
+
+    python scripts/fetch_rankings.py --projections 4for4-projections.csv
+
+FantasyPros put full projections behind a registration fence and now serves ten rows per
+position to signed-out callers, which is not enough to derive replacement level from.
+Without --projections the scrape is still attempted, and it fails loudly when it gets the
+teaser.
 
 The coverage report at the end is the important part. A player who fails to match across
 sources is silently absent from every recommendation, and you would never notice -- so the
@@ -31,6 +40,7 @@ from ff_helper.rankings.players import PlayerRegistry, SourceRow  # noqa: E402
 from ff_helper.rankings.sources import (  # noqa: E402
     fantasypros,
     ffc,
+    projections_csv,
     yahoo_adp,  # noqa: E402
 )
 from ff_helper.yahoo.client import YahooClient  # noqa: E402
@@ -46,6 +56,13 @@ def main() -> int:
         "--league",
         help="League key to snapshot. Defaults to FF_LEAGUE_KEY. Snapshots are cached per "
         "league, so run this once per league if you are in more than one.",
+    )
+    parser.add_argument(
+        "--projections",
+        type=Path,
+        help="CSV of per-stat season projections, e.g. exported from a 4for4 "
+        "subscription. Replaces the FantasyPros projections scrape, which now only "
+        "serves a ten-row teaser to signed-out callers.",
     )
     args = parser.parse_args()
 
@@ -93,16 +110,38 @@ def main() -> int:
         notes.append(f"FantasyPros rankings unavailable: {exc}")
         print(f"  FAILED: {exc}")
 
-    try:
-        print("Fetching FantasyPros projections ...")
-        projection_rows = fantasypros.fetch_projections(
-            scoring={"ppr": "PPR", "half-ppr": "HALF", "standard": "STD"}[slug]
-        )
-        rows.extend(projection_rows)
-        print(f"  {len(projection_rows)} players")
-    except Exception as exc:  # noqa: BLE001
-        notes.append(f"FantasyPros projections unavailable: {exc}")
-        print(f"  FAILED: {exc}")
+    # A supplied CSV replaces the scrape outright rather than blending with it. Two
+    # projection sets for one player would double-count him in the crosswalk, and the
+    # file you exported deliberately should win over a page that may be a teaser.
+    if args.projections:
+        try:
+            print(f"Reading projections from {args.projections} ...")
+            projection_rows = projections_csv.load(args.projections)
+            rows.extend(projection_rows)
+            with_stats = sum(1 for row in projection_rows if row.stats)
+            print(f"  {len(projection_rows)} players, {with_stats} with per-stat lines")
+            if not with_stats:
+                # Points-only still works, but it bakes in the exporter's scoring rather
+                # than the league's, so it must not pass silently.
+                notes.append(
+                    f"{args.projections.name} has no per-stat columns, so projections "
+                    "keep whatever scoring they were exported under instead of being "
+                    "re-scored under your league settings."
+                )
+        except Exception as exc:  # noqa: BLE001
+            print(f"  FAILED: {exc}")
+            return 1
+    else:
+        try:
+            print("Fetching FantasyPros projections ...")
+            projection_rows = fantasypros.fetch_projections(
+                scoring={"ppr": "PPR", "half-ppr": "HALF", "standard": "STD"}[slug]
+            )
+            rows.extend(projection_rows)
+            print(f"  {len(projection_rows)} players")
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"FantasyPros projections unavailable: {exc}")
+            print(f"  FAILED: {exc}")
 
     if not rows:
         print("\nEvery external source failed. Nothing useful to cache.")

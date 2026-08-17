@@ -42,6 +42,10 @@ RANKING_PAGES = {
 
 PROJECTION_POSITIONS = ("qb", "rb", "wr", "te")
 
+# The signed-out projections page serves exactly ten rows per position behind a
+# registration fence. Anything this short is a teaser, not a projection set.
+TEASER_ROWS = 10
+
 # FantasyPros projection table columns, in order, per position. The tables repeat header
 # names across stat groups (e.g. YDS appears under both passing and rushing), so position
 # is the only reliable way to know what each column means.
@@ -166,12 +170,27 @@ def fetch_projections(
                 week="draft",
                 scoring=scoring,
             )
-            rows.extend(parse_projections(html, position))
+            parsed = parse_projections(html, position)
+            if len(parsed) <= TEASER_ROWS:
+                # FantasyPros serves a short table plus a "create a free account to
+                # unlock" banner to signed-out callers. Parsing succeeds, which is the
+                # dangerous part: ten running backs looks like data, caches like data,
+                # and puts replacement level above every startable player in the league.
+                raise ScrapeError(
+                    f"got {len(parsed)} rows, the signed-out teaser rather than the "
+                    "full table"
+                )
+            rows.extend(parsed)
         except (httpx.HTTPError, ScrapeError) as exc:
             errors.append(f"{position}: {exc}")
 
     if not rows:
-        raise ScrapeError("All projection pages failed: " + "; ".join(errors))
+        raise ScrapeError(
+            "All projection pages failed: "
+            + "; ".join(errors)
+            + ".\nFantasyPros now requires an account for full projections. Export them "
+            "from a subscription instead and pass --projections to fetch_rankings.py."
+        )
     return rows
 
 
