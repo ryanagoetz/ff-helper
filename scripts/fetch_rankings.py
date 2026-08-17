@@ -33,6 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from ff_helper import offline  # noqa: E402
 from ff_helper.config import load_settings  # noqa: E402
 from ff_helper.engine.scoring import scoring_slug  # noqa: E402
 from ff_helper.rankings import cache  # noqa: E402
@@ -62,6 +63,14 @@ def main() -> int:
         "league, so run this once per league if you are in more than one.",
     )
     parser.add_argument(
+        "--offline",
+        type=Path,
+        metavar="CONFIG",
+        help="Build the snapshot with no Yahoo API access, from a league config YAML. "
+        "The player pool comes from --projections instead of Yahoo. Use this when API "
+        "approval has not arrived and the draft has.",
+    )
+    parser.add_argument(
         "--projections",
         type=Path,
         help="CSV of season projections, e.g. exported from a 4for4 subscription. "
@@ -70,29 +79,66 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    settings = load_settings()
-    league_key = args.league or settings.league_key
-    if not league_key:
-        print("No league key. Set FF_LEAGUE_KEY in .env or pass --league.")
-        print("Run scripts/setup_auth.py to list your leagues.")
-        return 1
-
     notes: list[str] = []
     rows: list[SourceRow] = []
 
-    with YahooClient(settings) as client:
-        print(f"Fetching league {league_key} ...")
-        league = client.league(league_key)
-        if league.settings is None:
-            print("Could not read league settings; cannot score projections.")
+    if args.offline:
+        # No credentials are read at all in this path -- load_settings() would demand a
+        # client id and secret that an offline user has no way to make useful.
+        try:
+            config = offline.load_config(args.offline)
+        except offline.OfflineConfigError as exc:
+            print(f"FAILED: {exc}")
             return 1
 
+        league = config.league
+        league_key = league.league_key
+        notes.extend(config.notes)
         slug = scoring_slug(league.settings)
-        print(f"  {league.name}: {league.num_teams} teams, {slug} scoring")
+        print(f"Offline league {league.name}: {league.num_teams} teams, {slug} scoring")
+        for note in config.notes:
+            print(f"  note: {note}")
 
-        print("Fetching Yahoo player pool (this walks 25 players per request) ...")
-        players = client.players(league_key, limit=600)
-        print(f"  {len(players)} players")
+        projections_path, _ = projections_csv.resolve_path(
+            DATA_DIR, league_key, args.projections
+        )
+        if projections_path is None:
+            print(
+                "\nOffline mode needs projections: they are the player pool as well as "
+                f"the values.\nPut an export at {DATA_DIR / 'projections.csv'} or pass "
+                "--projections."
+            )
+            return 1
+        try:
+            projection_rows = projections_csv.load(projections_path)
+        except projections_csv.ProjectionsError as exc:
+            print(f"FAILED: {exc}")
+            return 1
+
+        rows.extend(projection_rows)
+        players = offline.players_from_rows(projection_rows, league_key)
+        print(f"Player pool from {projections_path.name}: {len(players)} players")
+    else:
+        settings = load_settings()
+        league_key = args.league or settings.league_key
+        if not league_key:
+            print("No league key. Set FF_LEAGUE_KEY in .env or pass --league.")
+            print("Run scripts/setup_auth.py to list your leagues.")
+            return 1
+
+        with YahooClient(settings) as client:
+            print(f"Fetching league {league_key} ...")
+            league = client.league(league_key)
+            if league.settings is None:
+                print("Could not read league settings; cannot score projections.")
+                return 1
+
+            slug = scoring_slug(league.settings)
+            print(f"  {league.name}: {league.num_teams} teams, {slug} scoring")
+
+            print("Fetching Yahoo player pool (this walks 25 players per request) ...")
+            players = client.players(league_key, limit=600)
+            print(f"  {len(players)} players")
 
     # -- external sources. One failing must not sink the run. -----------------------
     ffc_scoring = {"ppr": "ppr", "half-ppr": "half-ppr", "standard": "standard"}[slug]
@@ -117,10 +163,12 @@ def main() -> int:
     # A supplied CSV replaces the scrape outright rather than blending with it. Two
     # projection sets for one player would double-count him in the crosswalk, and the
     # file you exported deliberately should win over a page that may be a teaser.
-    projections_path, league_specific = projections_csv.resolve_path(
-        DATA_DIR, league_key, args.projections
-    )
-    if projections_path is not None:
+    projections_path, _ = projections_csv.resolve_path(DATA_DIR, league_key, args.projections)
+    if args.offline:
+        # Already loaded above: offline, the projections are the player pool as well as
+        # the values, so they have to be read before anything else can be built.
+        notes.append(f"Projections from {projections_path.name}")
+    elif projections_path is not None:
         try:
             print(f"Reading projections from {projections_path} ...")
             projection_rows = projections_csv.load(projections_path)
@@ -128,29 +176,6 @@ def main() -> int:
             with_stats = sum(1 for row in projection_rows if row.stats)
             print(f"  {len(projection_rows)} players, {with_stats} with per-stat lines")
             notes.append(f"Projections from {projections_path.name}")
-
-            if not with_stats:
-                # Points-only still works, but it bakes in the exporter's scoring rather
-                # than the league's, so it must not pass silently.
-                notes.append(
-                    f"{projections_path.name} has no per-stat columns, so projections "
-                    "keep whatever scoring they were exported under instead of being "
-                    "re-scored under your league settings."
-                )
-                if not league_specific:
-                    # The dangerous combination: numbers already scored under some
-                    # league's rules, from a file not tied to *this* league.
-                    print(
-                        f"\n  WARNING: {projections_path.name} carries points with no "
-                        "stats to re-score,\n  and is not named for this league. If it "
-                        "was exported under another league's\n  scoring, every value "
-                        "here is wrong and nothing downstream can tell.\n  Rename it to "
-                        f"projections-{league_key}.csv to tie it to this league.\n"
-                    )
-                    notes.append(
-                        f"{projections_path.name} is a shared file, not named for "
-                        f"{league_key}, and carries pre-scored points."
-                    )
         except Exception as exc:  # noqa: BLE001
             print(f"  FAILED: {exc}")
             return 1
@@ -169,6 +194,13 @@ def main() -> int:
     if not rows:
         print("\nEvery external source failed. Nothing useful to cache.")
         return 1
+
+    if args.offline:
+        # Done after the other sources are in hand: they are where defenses come from.
+        players, supplement_notes = offline.supplement_positions(players, rows, league_key)
+        notes.extend(supplement_notes)
+        for note in supplement_notes:
+            print(f"  note: {note}")
 
     # -- coverage report -------------------------------------------------------------
     registry = PlayerRegistry(players)

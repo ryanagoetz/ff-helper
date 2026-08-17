@@ -52,6 +52,14 @@ _POINTS_COLUMNS = (
     "proj_fpts",
 )
 
+# ADP matters far more offline than online: with no Yahoo API there is no Yahoo ADP, and
+# this becomes one of only two market signals left (the other being FFC).
+_ADP_COLUMNS = ("adp", "avg_pick", "average_pick", "adp_average", "adp_avg")
+
+# The auction analog of ADP. Rarely present in a projections export, and its absence is
+# survivable -- engine/auction.py falls back to par value when no market price exists.
+_COST_COLUMNS = ("auction_value", "auction_cost", "avg_cost", "average_cost", "salary", "aav")
+
 # Some exports carry no plain position column, only a combined positional rank such as
 # 4for4's "Position-Rank" holding "RB-01". The prefix is the position.
 _POSITION_RANK_COLUMNS = ("position_rank", "pos_rank", "positional_rank", "pos_rk")
@@ -214,6 +222,8 @@ def load(path: Path, *, source: str = SOURCE) -> list[SourceRow]:
                     if value is not None:
                         stats[key] = value
                 points = _to_float(_column(row, _POINTS_COLUMNS))
+                adp = _to_float(_column(row, _ADP_COLUMNS))
+                auction_cost = _to_float(_column(row, _COST_COLUMNS))
             except ValueError as exc:
                 problems.append(f"line {line_number} ({name}): {exc}")
                 continue
@@ -241,6 +251,8 @@ def load(path: Path, *, source: str = SOURCE) -> list[SourceRow]:
                     team=normalize_team(_column(row, _TEAM_COLUMNS) or ""),
                     source=source,
                     projected_points=points,
+                    adp=adp,
+                    auction_cost=auction_cost,
                     stats=stats,
                 )
             )

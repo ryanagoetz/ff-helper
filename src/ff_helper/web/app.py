@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from ff_helper import offline
 from ff_helper.assistant import Assistant
 from ff_helper.config import Settings, load_settings
 from ff_helper.draft import keepers
@@ -228,6 +229,53 @@ def bootstrap(
     return assistant, sync
 
 
+def bootstrap_offline(config_path: Path, keeper_csv: Path | None = None) -> Assistant:
+    """Serve with no Yahoo access: league from YAML, picks typed in by hand.
+
+    There is no sync object at all, rather than a stubbed one. ``create_app`` already
+    treats ``sync=None`` as "not running", so the UI reports the feed as absent instead
+    of showing a sync indicator that is green and lying.
+    """
+    try:
+        config = offline.load_config(config_path)
+    except offline.OfflineConfigError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    league = config.league
+    snapshot = cache.load(league.league_key)
+    if snapshot is None:
+        raise SystemExit(
+            f"No ranking snapshot found for {league.name}.\n"
+            f"Run `python scripts/fetch_rankings.py --offline {config_path}` first."
+        )
+
+    lock = threading.Lock()
+    state = DraftState(league=league, teams=config.teams)
+    registry = PlayerRegistry(snapshot.players)
+
+    # Offline there are no pre-draft rosters to read, so a keeper league needs the CSV.
+    # Passing no rostered players makes resolve() fall back to an empty Yahoo set, which
+    # is correct: we genuinely do not know of any keepers unless told.
+    try:
+        keeper_set = keepers.resolve([], config.teams, registry, keeper_csv)
+    except keepers.KeeperError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    state.apply_keepers(keeper_set.kept)
+    assistant = Assistant.build(league, state, snapshot, lock=lock)
+    assistant.notes.extend(config.notes)
+    assistant.notes.extend(keeper_set.notes)
+    assistant.notes.append(
+        "Offline mode: no Yahoo feed, so every pick must be entered by hand."
+    )
+    if not keeper_set.kept:
+        assistant.notes.append(
+            "No keepers loaded. Offline there is no roster to read, so pass --keepers "
+            "if this is a keeper league."
+        )
+    return assistant
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="ff-helper", description="Live draft assistant.")
     parser.add_argument(
@@ -241,19 +289,32 @@ def main() -> None:
         help="CSV of kept players, overriding Yahoo. Columns: player,team,cost,round. "
         "Use when your league settles keepers outside Yahoo.",
     )
+    parser.add_argument(
+        "--offline",
+        type=Path,
+        metavar="CONFIG",
+        help="Run with no Yahoo API access, from a league config YAML. Picks are entered "
+        "by hand and there is no live feed. Use when API approval has not arrived.",
+    )
     parser.add_argument("--port", type=int, default=8777, help="Port to serve on.")
     args = parser.parse_args()
 
-    settings = load_settings()
-    assistant, sync = bootstrap(settings, args.league, args.keepers)
+    sync: DraftSync | None
+    if args.offline:
+        assistant = bootstrap_offline(args.offline, args.keepers)
+        sync = None
+    else:
+        settings = load_settings()
+        assistant, sync = bootstrap(settings, args.league, args.keepers)
 
-    # Prime the board before serving, so the first page load is already accurate.
-    try:
-        sync.poll_once()
-    except Exception as exc:  # noqa: BLE001
-        print(f"Initial draft sync failed ({exc}); starting anyway.")
+        # Prime the board before serving, so the first page load is already accurate.
+        try:
+            sync.poll_once()
+        except Exception as exc:  # noqa: BLE001
+            print(f"Initial draft sync failed ({exc}); starting anyway.")
 
-    sync.start()
+        sync.start()
+
     app = create_app(assistant, sync)
 
     url = f"http://127.0.0.1:{args.port}"
@@ -273,7 +334,8 @@ def main() -> None:
     try:
         uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
     finally:
-        sync.stop()
+        if sync is not None:
+            sync.stop()
 
 
 if __name__ == "__main__":

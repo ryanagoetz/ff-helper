@@ -1,0 +1,67 @@
+# Bust A Move -- offline league description.
+#
+# Used when the Yahoo API is unavailable. Everything here normally comes from the API;
+# offline it comes from you. Transcribed from the league's Scoring & Settings page.
+#
+#   uv run python scripts/fetch_rankings.py --offline data/league-bustamove.yaml
+#   uv run ff-helper --offline data/league-bustamove.yaml
+
+name: Bust A Move
+league_id: "107878"
+season: "2026"
+num_teams: 12
+draft_type: auction
+
+# Not shown on the settings page. Yahoo's default is 200 -- confirm it on the draft page,
+# because every dollar value in the app scales off this number.
+auction_budget: 200
+
+# Roster Positions: QB, WR, WR, RB, RB, TE, W/R/T, K, DEF, BN x6, IR
+# IR is excluded from roster_size automatically, so this is 15 draftable spots.
+roster:
+  QB: 1
+  WR: 2
+  RB: 2
+  TE: 1
+  W/R/T: 1
+  K: 1
+  DEF: 1
+  BN: 6
+  IR: 1
+
+# Yahoo states yardage as "25 yards per point"; this wants points per yard, so 1/25 = 0.04.
+scoring:
+  pass_yds: 0.04     # 25 yards per point
+  pass_td: 4
+  int: -1
+  rush_yds: 0.1      # 10 yards per point
+  rush_td: 6
+  rec: 0.5           # half PPR
+  rec_yds: 0.1       # 10 yards per point
+  rec_td: 6
+  ret_td: 6
+  two_pt: 2
+  fum_lost: -2
+
+# Scored by the league but not scoreable here, listed so the gap is on the record rather
+# than a surprise: return yards (50 yds/pt), offensive fumble return TD (6), pick sixes
+# thrown (-1), all kicker scoring (FG by distance, PAT), and all DEF/ST scoring (sacks,
+# turnovers, safeties, blocks, points-allowed tiers). Kickers and defenses are ranked by
+# consensus instead of projection, which is the same thing the online path does.
+
+# Replace these with the real team names before drafting -- they appear in the roster
+# panel and in every keeper CSV you write.
+my_team: Team Ryan
+teams:
+  - Team Ryan
+  - Team 2
+  - Team 3
+  - Team 4
+  - Team 5
+  - Team 6
+  - Team 7
+  - Team 8
+  - Team 9
+  - Team 10
+  - Team 11
+  - Team 12

@@ -232,6 +232,40 @@ didn't match and exits non-zero if top-200 coverage drops below 90%.
 
 ---
 
+## No API access? Run it offline
+
+Yahoo's approval does not arrive on a schedule that cares about your draft date. Offline
+mode runs the whole app without the API: you describe the league in a YAML file, the
+player pool comes from your projections export, and picks are typed in.
+
+```bash
+cp data/league-bustamove.yaml data/league-mine.yaml   # then edit it
+uv run python scripts/fetch_rankings.py --offline data/league-mine.yaml
+uv run ff-helper --offline data/league-mine.yaml
+```
+
+The config carries what the API would otherwise supply — roster slots, scoring, team
+names, which team is yours, and the auction budget. Scoring keys are the same names the
+projections CSV uses, and a category the engine cannot score is reported rather than
+dropped in silence.
+
+Everything above the data layer is unchanged: scoring, replacement level, VOR, VONA,
+auction par values, and inflation are the same code that runs online. What you lose:
+
+- **Yahoo's own ADP**, normally weighted 0.65 because it describes drafts on the platform
+  you actually draft on. You are left with your export's ADP and FFC's.
+- **Live draft sync.** Every pick is entered by hand — the manual path that exists for
+  feed stalls becomes the only path. The sync indicator reads as absent rather than green.
+- **Automatic keepers**, since pre-draft rosters come from the API. Use `--keepers`.
+- **Market prices in auctions**, unless your export has them. You still get what a player
+  is worth; you lose whether the room will overpay.
+
+Team defenses are not in projection exports, so they are seeded from FFC and FantasyPros
+and ranked by consensus — otherwise a league with a DEF slot would have a roster spot the
+app could never fill.
+
+---
+
 ## Draft day
 
 ```bash
