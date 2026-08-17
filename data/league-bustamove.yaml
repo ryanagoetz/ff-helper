@@ -49,19 +49,19 @@ scoring:
 # turnovers, safeties, blocks, points-allowed tiers). Kickers and defenses are ranked by
 # consensus instead of projection, which is the same thing the online path does.
 
-# Replace these with the real team names before drafting -- they appear in the roster
-# panel and in every keeper CSV you write.
-my_team: Team Ryan
+# Team names as of 2026-08-17. They can change up to the draft; if one does, edit it here
+# and in any keeper CSV, since both match on the name.
+my_team: "Rx..."
 teams:
-  - Team Ryan
-  - Team 2
-  - Team 3
-  - Team 4
-  - Team 5
-  - Team 6
-  - Team 7
-  - Team 8
-  - Team 9
-  - Team 10
-  - Team 11
-  - Team 12
+  - "Loading Team Name..."
+  - "Murray- Present"
+  - "B-U-T(t)-S Butts Butts Butts"
+  - "Ja'Marr Ja'Marr Binks"
+  - "SumTingWong"
+  - "3 QB's"
+  - "My Chubb is Unable to Perform"
+  - "2 Gurleys 1 Kupp"
+  - "Rx..."
+  - "Sutton for Punishment"
+  - "Emeekah Eggbigboo"
+  - "2T TBD"

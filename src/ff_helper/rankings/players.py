@@ -130,21 +130,35 @@ def normalize_name(name: str) -> str:
     return " ".join(parts)
 
 
-def name_variants(name: str) -> set[str]:
-    """Alternate keys a source might use for the same player.
+def name_variants(name: str) -> list[str]:
+    """Alternate keys a source might use for the same player, strongest first.
 
     Covers the "D.J. Moore" vs "DJ Moore" family (already handled by punctuation
     stripping) plus first-initial forms like "K. Walker".
+
+    **Order is load-bearing, and this used to be a set.** The initial form collapses
+    "Bijan Robinson" and "Brian Robinson" onto the same key -- and they are both running
+    backs on Atlanta, so position and team cannot separate them either. With arbitrary
+    iteration order, the weakest variant could be tried first and quietly resolve one
+    player to the other: Bijan's projection got averaged with Brian's and his ADP of 2
+    with Brian's 155, valuing the second overall pick as a mid-round back. The full name
+    must always be tried before any abbreviation of it.
     """
     base = normalize_name(name)
-    variants = {base}
+    variants = [base]
     parts = base.split()
     if len(parts) >= 2:
-        variants.add(f"{parts[0][0]} {' '.join(parts[1:])}")
-        # Some sources drop middle names entirely.
+        # Dropping a middle name still identifies a person; an initial does not.
         if len(parts) > 2:
-            variants.add(f"{parts[0]} {parts[-1]}")
+            variants.append(f"{parts[0]} {parts[-1]}")
+        variants.append(f"{parts[0][0]} {' '.join(parts[1:])}")
     return variants
+
+
+def is_initial_form(variant: str) -> bool:
+    """Whether a variant has been reduced to a first initial, e.g. "b robinson"."""
+    head = variant.split(" ", 1)[0]
+    return len(head) == 1
 
 
 @dataclass(frozen=True)
@@ -209,16 +223,26 @@ class PlayerRegistry:
         team = normalize_team(row.team)
 
         for variant in name_variants(row.name):
+            # An initial is not an identity. "b robinson" fits both Bijan and Brian
+            # Robinson, who are both Atlanta running backs, so neither position nor team
+            # breaks the tie -- and picking one merges two players into a single ruined
+            # valuation. Require the abbreviation to point at exactly one player.
+            strict = is_initial_form(variant)
+
             # 1. Exact on name + position -- the common case.
             candidates = self._index.get((variant, position))
             if candidates:
-                return _disambiguate(candidates, team)
+                match = _disambiguate(candidates, team, unique_only=strict)
+                if match is not None:
+                    return match
 
             # 2. Name only. Positions disagree legitimately (a WR listed as a RB in one
             #    source), so a confident name match still beats no match.
             candidates = self._by_name.get(variant)
             if candidates:
-                return _disambiguate(candidates, team)
+                match = _disambiguate(candidates, team, unique_only=strict)
+                if match is not None:
+                    return match
 
         # 3. Same surname and position, with a compatible first name. This is what
         #    catches "Ken Walker" against "Kenneth Walker": string similarity scores that
@@ -283,11 +307,24 @@ class PlayerRegistry:
         return grouped, report
 
 
-def _disambiguate(candidates: list[YahooPlayer], team: str) -> YahooPlayer:
-    """Pick among same-named players using team, else the first (Yahoo sorts by rank)."""
-    if len(candidates) == 1 or not team:
+def _disambiguate(
+    candidates: list[YahooPlayer], team: str, *, unique_only: bool = False
+) -> YahooPlayer | None:
+    """Pick among same-named players using team, else the first (Yahoo sorts by rank).
+
+    ``unique_only`` is for matches made on an abbreviated name, where falling back to
+    "the first one" would merge two different players rather than pick between two
+    spellings of one. Such a match returns None instead, leaving the caller to try a
+    stronger rule.
+    """
+    if len(candidates) == 1:
         return candidates[0]
-    for candidate in candidates:
-        if normalize_team(candidate.team_abbr) == team:
-            return candidate
-    return candidates[0]
+
+    if team:
+        on_team = [c for c in candidates if normalize_team(c.team_abbr) == team]
+        if len(on_team) == 1:
+            return on_team[0]
+        if on_team and not unique_only:
+            return on_team[0]
+
+    return None if unique_only else candidates[0]
