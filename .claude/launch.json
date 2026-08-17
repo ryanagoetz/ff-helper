@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ff-helper-offline",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "ff-helper", "--offline", "data/league-bustamove.yaml", "--port", "8778"],
+      "port": 8778,
+      "autoPort": false
+    }
+  ]
+}

@@ -125,14 +125,18 @@
   <div>
     <div class="panel">
       <div class="label" style="margin-bottom:8px">Mark a player drafted</div>
-      <input type="search" id="search" placeholder="Type a name if the feed stalls…" autocomplete="off">
+      <input type="search" id="search" placeholder="Name, then Enter…" autocomplete="off">
       <div id="auctionEntry" style="display:none; margin-top:8px">
         <div class="row">
           <input type="number" id="soldPrice" min="1" placeholder="$ price" style="width:90px; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); color:var(--text)">
           <select id="soldTeam" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); color:var(--text)"></select>
         </div>
-        <div class="muted" style="margin-top:6px">Price and buyer are required — every dollar value depends on them.</div>
+        <div class="muted" style="margin-top:6px">
+          Type a name, <b>Enter</b> to pick, price, <b>Enter</b>, buyer, <b>Enter</b> to record.
+          Arrow keys move through matches; Esc clears.
+        </div>
       </div>
+      <div id="entryMessage" style="display:none; margin-top:8px; padding:8px 10px; border-radius:8px; font-size:13px"></div>
       <div class="results" id="searchResults"></div>
       <div class="row" style="margin-top:10px">
         <button id="undoBtn">Undo last manual pick</button>
@@ -258,11 +262,26 @@ function renderAuctionBar(s) {
 
   // Buyer dropdown: a sale changes that team's budget, so recording who bought matters
   // as much as recording the price.
+  // A blank first option, and no default buyer. Defaulting to the previous buyer -- or
+  // to you -- is wrong far more often than it is right, and a sale charged to the wrong
+  // team corrupts that team's budget, the money left in the room, and therefore every
+  // price the board quotes for the rest of the draft. Better one keystroke than a
+  // silent mis-attribution.
   const select = $("soldTeam");
-  if (select.options.length !== (a.teams || []).length) {
-    select.innerHTML = (a.teams || []).map(t =>
-      `<option value="${t.team_key}"${t.is_mine ? " selected" : ""}>${t.name}${t.is_mine ? " (you)" : ""} — $${t.remaining}</option>`
+  const teams = a.teams || [];
+  const wanted = teams.length + 1;
+  if (select.options.length !== wanted) {
+    const keep = select.value;
+    select.innerHTML = `<option value="">— buyer —</option>` + teams.map(t =>
+      `<option value="${t.team_key}">${t.name}${t.is_mine ? " (you)" : ""} — $${t.remaining}</option>`
     ).join("");
+    select.value = keep;
+  } else {
+    // Keep the live budgets fresh in the labels without disturbing a pending choice.
+    teams.forEach((t, index) => {
+      const option = select.options[index + 1];
+      if (option) option.textContent = `${t.name}${t.is_mine ? " (you)" : ""} — $${t.remaining}`;
+    });
   }
 }
 
@@ -347,47 +366,164 @@ async function refresh() {
 }
 
 // -- manual override -------------------------------------------------------------
+// Offline there is no feed, so this is not a fallback for a stalled poller -- it is the
+// only way picks reach the board, roughly 180 times in a 12-team auction. So it is built
+// for the keyboard: name, Enter, price, Enter, buyer, Enter. Nothing here needs a mouse,
+// and nothing fails quietly.
 let searchTimer = null;
-$("search").addEventListener("input", e => {
-  clearTimeout(searchTimer);
-  const q = e.target.value.trim();
-  if (!q) { $("searchResults").innerHTML = ""; return; }
-  searchTimer = setTimeout(async () => {
-    const data = await getJSON(`/api/search?q=${encodeURIComponent(q)}`);
-    $("searchResults").innerHTML = data.results.map(r =>
-      `<div data-key="${r.player_key}">
-         <span>${r.name} ${posTag(r.position)}</span>
-         <span class="muted">ADP ${r.adp}</span>
-       </div>`).join("") || `<div class="muted">No undrafted match.</div>`;
-  }, 180);
-});
+let matches = [];
+let highlighted = 0;
+let chosen = null;
 
-$("searchResults").addEventListener("click", async e => {
-  const row = e.target.closest("[data-key]");
-  if (!row) return;
+function say(text, kind) {
+  const box = $("entryMessage");
+  box.textContent = text;
+  box.style.display = text ? "block" : "none";
+  const colours = {
+    error: ["#3a1d1d", "#f8b4b4"],
+    ok: ["#16301f", "#9ae6b4"],
+    hint: ["var(--panel-2)", "var(--muted)"],
+  }[kind] || ["var(--panel-2)", "var(--muted)"];
+  box.style.background = colours[0];
+  box.style.color = colours[1];
+}
 
-  const body = { player_key: row.dataset.key };
+function drawMatches() {
+  const box = $("searchResults");
+  if (!matches.length) {
+    // "No undrafted match" is only true when a search found nothing. Once a player is
+    // chosen the list is empty because we emptied it, and saying it then reads as
+    // though the pick failed.
+    const searching = $("search").value.trim() && !chosen;
+    box.innerHTML = searching ? `<div class="muted">No undrafted match.</div>` : "";
+    return;
+  }
+  box.innerHTML = matches.map((r, index) =>
+    `<div data-key="${r.player_key}" data-index="${index}"${
+      index === highlighted ? ' style="background:var(--panel-2); outline:1px solid var(--line)"' : ""
+    }>
+       <span>${r.name} ${posTag(r.position)}</span>
+       <span class="muted">ADP ${r.adp}</span>
+     </div>`).join("");
+}
+
+function chooseHighlighted() {
+  const match = matches[highlighted];
+  if (!match) return false;
+  chosen = match;
+  $("search").value = match.name;
+  matches = [];
+  drawMatches();
+  if (isAuction) {
+    say(`${match.name} — enter the price it sold for, then the buyer.`, "hint");
+    $("soldPrice").focus();
+  }
+  return true;
+}
+
+function resetEntry() {
+  chosen = null; matches = []; highlighted = 0;
+  $("search").value = "";
+  if (isAuction) { $("soldPrice").value = ""; $("soldTeam").value = ""; }
+  drawMatches();
+}
+
+async function submitPick() {
+  if (!chosen) { say("Pick a player first — type a name and press Enter.", "error"); return; }
+
+  const body = { player_key: chosen.player_key };
   if (isAuction) {
     const price = parseInt($("soldPrice").value, 10);
-    if (!price || price < 1) { $("soldPrice").focus(); return; }
+    if (!price || price < 1) {
+      say("This sale needs a price. Budgets and every quoted value depend on it.", "error");
+      $("soldPrice").focus();
+      return;
+    }
+    const team = $("soldTeam").value;
+    if (!team) {
+      say("This sale needs a buyer, or the money leaves nobody's budget.", "error");
+      $("soldTeam").focus();
+      return;
+    }
     body.cost = price;
-    body.team_key = $("soldTeam").value;
+    body.team_key = team;
   }
 
+  const label = chosen.name;
+  const detail = isAuction
+    ? ` — $${body.cost} to ${$("soldTeam").selectedOptions[0].textContent.split(" — ")[0]}`
+    : "";
   try {
     await getJSON("/api/pick", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     });
-  } catch (err) { return; }
+  } catch (err) {
+    say(`Could not record ${label}. Nothing was changed — try again.`, "error");
+    return;
+  }
 
-  $("search").value = ""; $("searchResults").innerHTML = "";
-  if (isAuction) $("soldPrice").value = "";
+  resetEntry();
+  say(`Recorded ${label}${detail}. Undo if that is wrong.`, "ok");
+  $("search").focus();
   refresh();
+}
+
+$("search").addEventListener("input", e => {
+  clearTimeout(searchTimer);
+  chosen = null;
+  const q = e.target.value.trim();
+  if (!q) { matches = []; drawMatches(); return; }
+  searchTimer = setTimeout(async () => {
+    const data = await getJSON(`/api/search?q=${encodeURIComponent(q)}`);
+    matches = data.results || [];
+    highlighted = 0;
+    drawMatches();
+  }, 140);
+});
+
+$("search").addEventListener("keydown", e => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (!matches.length) return;
+    e.preventDefault();
+    highlighted = (highlighted + (e.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length;
+    drawMatches();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    // A name already chosen plus Enter means "record it" -- so a snake pick is one
+    // keystroke, and an auction sale does not need the mouse to finish.
+    if (chosen) { submitPick(); return; }
+    if (!chooseHighlighted()) say("No undrafted player matches that name.", "error");
+    else if (!isAuction) submitPick();
+  } else if (e.key === "Escape") {
+    resetEntry(); say("", "hint");
+  }
+});
+
+$("soldPrice").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); $("soldTeam").focus(); }
+  else if (e.key === "Escape") { resetEntry(); say("", "hint"); $("search").focus(); }
+});
+
+$("soldTeam").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); submitPick(); }
+  else if (e.key === "Escape") { resetEntry(); say("", "hint"); $("search").focus(); }
+});
+
+$("searchResults").addEventListener("click", e => {
+  const row = e.target.closest("[data-key]");
+  if (!row) return;
+  highlighted = parseInt(row.dataset.index, 10) || 0;
+  if (chooseHighlighted() && !isAuction) submitPick();
 });
 
 $("undoBtn").addEventListener("click", async () => {
-  try { await getJSON("/api/undo", { method: "POST" }); } catch (e) { /* nothing to undo */ }
+  try {
+    const undone = await getJSON("/api/undo", { method: "POST" });
+    say(`Undid the last manual pick.`, "ok");
+  } catch (e) {
+    say("Nothing to undo.", "error");
+  }
   refresh();
 });
 
