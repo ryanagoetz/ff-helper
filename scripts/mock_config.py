@@ -96,6 +96,8 @@ def main() -> int:
     if args.teams:
         names = [name.strip() for name in args.teams.split(",") if name.strip()]
     else:
+        if sys.stdin.isatty():
+            print("Paste the draft-results panel, then press Ctrl-D on a blank line:\n")
         text = sys.stdin.read()
         if not text.strip():
             print("Nothing on stdin. Paste the draft-results panel, or pass --teams.")

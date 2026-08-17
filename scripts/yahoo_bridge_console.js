@@ -18,8 +18,11 @@
  */
 
 (() => {
-  const PORT = 8779;
-  const TOKEN = "PASTE_TOKEN_HERE";
+  // ---- the only two things you edit ------------------------------------------------
+  const PORT = 8777;                    // whatever ff-helper is serving on
+  const TOKEN = "PASTE_TOKEN_HERE";     // printed by: uv run ff-helper ... --bridge
+  // -----------------------------------------------------------------------------------
+
   const EVERY_MS = 4000;
 
   const PANELS = [

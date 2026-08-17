@@ -7,6 +7,7 @@ so that a git clone stays clean and secrets never land in the repo.
 from __future__ import annotations
 
 import os
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +36,23 @@ def state_dir() -> Path:
 
 def token_path() -> Path:
     return state_dir() / "token.json"
+
+
+def bridge_token() -> str:
+    """A stable token for the draft-room reader, created once and reused.
+
+    Regenerating it per run would mean re-editing the reader script after every restart,
+    and a restart mid-draft is exactly when nobody has time for that.
+    """
+    path = state_dir() / "bridge-token"
+    if path.exists():
+        existing = path.read_text().strip()
+        if existing:
+            return existing
+    token = secrets.token_urlsafe(12)
+    path.write_text(token)
+    path.chmod(0o600)
+    return token
 
 
 def cache_dir() -> Path:

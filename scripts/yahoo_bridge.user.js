@@ -39,7 +39,12 @@
 (function () {
   "use strict";
 
-  const ENDPOINT = "http://127.0.0.1:8777/api/board/paste";
+  // ---- the only two things you edit ----------------------------------------------
+  const PORT = 8777;                    // whatever ff-helper is serving on
+  const TOKEN = "PASTE_TOKEN_HERE";     // printed by: uv run ff-helper ... --bridge
+  // ---------------------------------------------------------------------------------
+
+  const ENDPOINT = "http://127.0.0.1:" + PORT + "/api/board/paste";
   const EVERY_MS = 4000;
 
   // Tried in order; the first that exists and has text wins. The last is the whole page,
@@ -91,7 +96,7 @@
     GM_xmlhttpRequest({
       method: "POST",
       url: ENDPOINT,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Bridge-Token": TOKEN },
       // strict:false — an unattended reader must not stall the rest of the draft over one
       // unmatchable name. An unresolved BUYER still blocks, server-side, because that
       // corrupts every price rather than merely leaving the board stale.

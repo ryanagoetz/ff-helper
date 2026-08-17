@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import secrets
 import threading
 import time
 import webbrowser
@@ -24,6 +23,7 @@ from pydantic import BaseModel
 from ff_helper import offline
 from ff_helper.assistant import Assistant
 from ff_helper.config import Settings, load_settings
+from ff_helper.config import bridge_token as config_bridge_token
 from ff_helper.draft import bridge, keepers
 from ff_helper.draft.state import BridgeSale, DraftState
 from ff_helper.draft.sync import DraftSync
@@ -482,7 +482,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    token = secrets.token_urlsafe(12) if args.bridge else ""
+    token = config_bridge_token() if args.bridge else ""
 
     sync: DraftSync | None
     if args.offline:
