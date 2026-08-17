@@ -20,6 +20,10 @@ API_BASE = "https://fantasysports.yahooapis.com/fantasy/v2"
 # Yahoo's out-of-band redirect value, used when a localhost callback is rejected.
 OOB_REDIRECT = "oob"
 
+# Yahoo grants fantasy access to an approved app, not per sign-in request, so no scope is
+# sent by default -- asking for one an unapproved app lacks fails with invalid_scope.
+DEFAULT_OAUTH_SCOPE = ""
+
 
 def state_dir() -> Path:
     """Directory for tokens and caches. Override with FF_HELPER_HOME (used by tests)."""
@@ -48,6 +52,9 @@ class Settings:
     poll_interval: float
     # Overrides the auction budget when Yahoo does not publish one for your league.
     auction_budget: int | None = None
+    # Empty means send no scope at all, which is what an approved app wants. See
+    # authorization_url for why asking is worse than not asking.
+    oauth_scope: str = DEFAULT_OAUTH_SCOPE
 
     @property
     def uses_oob(self) -> bool:
@@ -67,10 +74,13 @@ def load_settings(*, require_credentials: bool = True) -> Settings:
     if require_credentials and not (client_id and client_secret):
         raise SystemExit(
             "Missing Yahoo credentials.\n"
-            "  1. Register an app at https://developer.yahoo.com/apps/create/\n"
-            "     (Confidential Client, Fantasy Sports -> Read)\n"
-            "  2. cp .env.example .env\n"
-            "  3. Paste YAHOO_CLIENT_ID and YAHOO_CLIENT_SECRET into .env\n"
+            "  1. Apply for Fantasy Sports API access at\n"
+            "     https://sports.yahoo.com/developer/access/ -- it is an approval\n"
+            "     process, and nothing works until it clears\n"
+            "  2. Register an app at https://developer.yahoo.com/apps/create/\n"
+            "     (Confidential Client; leave API Permissions unticked -- Fantasy\n"
+            "      Sports is not offered there any more)\n"
+            "  3. Put YAHOO_CLIENT_ID and YAHOO_CLIENT_SECRET in a .env file\n"
             "See README.md for the full walkthrough."
         )
 
@@ -83,6 +93,7 @@ def load_settings(*, require_credentials: bool = True) -> Settings:
         league_key=(os.environ.get("FF_LEAGUE_KEY") or "").strip() or None,
         poll_interval=float(os.environ.get("FF_POLL_INTERVAL", "2.0")),
         auction_budget=_optional_int(os.environ.get("FF_AUCTION_BUDGET")),
+        oauth_scope=(os.environ.get("FF_OAUTH_SCOPE") or "").strip() or DEFAULT_OAUTH_SCOPE,
     )
 
 

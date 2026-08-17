@@ -66,16 +66,27 @@ def _basic_auth_header(settings: Settings) -> str:
 
 
 def authorization_url(settings: Settings, state: str) -> str:
-    """The URL the user opens in a browser to approve access."""
-    query = urlencode(
-        {
-            "client_id": settings.client_id,
-            "redirect_uri": settings.redirect_uri,
-            "response_type": "code",
-            "state": state,
-        }
-    )
-    return f"{AUTH_URL}?{query}"
+    """The URL the user opens in a browser to approve access.
+
+    No ``scope`` parameter is sent by default, and that is deliberate. Fantasy access is
+    granted to the *app* -- via Yahoo's approval process at
+    https://sports.yahoo.com/developer/access/ -- not requested per sign-in. Asking for
+    ``fspt-r`` from an app that has not been approved is rejected outright with
+    ``error=invalid_scope`` before the user can even approve, which is a worse failure than
+    signing in successfully and discovering the problem on the first API call. Once the app
+    is approved, the permission rides on the token without being asked for.
+
+    ``FF_OAUTH_SCOPE`` forces a scope anyway, for the day Yahoo decides it wants one.
+    """
+    params = {
+        "client_id": settings.client_id,
+        "redirect_uri": settings.redirect_uri,
+        "response_type": "code",
+        "state": state,
+    }
+    if settings.oauth_scope:
+        params["scope"] = settings.oauth_scope
+    return f"{AUTH_URL}?{urlencode(params)}"
 
 
 def exchange_code(settings: Settings, code: str) -> Token:

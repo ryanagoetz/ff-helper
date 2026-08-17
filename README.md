@@ -92,32 +92,75 @@ and you'll want to overrule it sometimes.
 
 ## Setup
 
-Four steps, once. Budget twenty minutes, and do it well before draft day.
+Five steps, once. Budget twenty minutes of your own time — but start step 1 well before
+draft day, because how long Yahoo takes to approve you is not up to either of us.
 
-### 1. Register a Yahoo app
+### 1. Apply for Fantasy Sports API access
+
+**Do this first, and do it early — it is an approval process, not a checkbox, and nothing
+else in this README works until it clears.**
+
+Apply at **https://sports.yahoo.com/developer/access/**. The form asks what you are
+building, what data you need, and how many users you expect; Yahoo warns that thin
+submissions are closed without reply, so describe the app properly. Access is read-only,
+which is all this app wants anyway.
+
+Yahoo publishes no approval timeline, so treat it as the long pole in your setup.
+
+### 2. Register a Yahoo app
 
 1. Go to **https://developer.yahoo.com/apps/create/**
 2. **Application Name:** `ff-helper`
 3. **Application Type:** *Confidential Client*
 4. **Redirect URI:** `https://localhost:8000/callback`
-5. **API Permissions:** tick **Fantasy Sports**, and choose **Read** only — the app never
-   writes to your league, so there's no reason to grant more.
-6. Copy the **Client ID** and **Client Secret**.
+5. **API Permissions:** leave everything unticked. Fantasy Sports is not offered here any
+   more — the list is down to OpenID Connect and TW Auction, neither of which you want.
+   Fantasy access arrives through the approval above, attached to the app itself.
+6. Copy the **Client ID** and **Client Secret**. The access application has an optional
+   Client ID field, so register the app first and give Yahoo the ID.
 
-### 2. Install and configure
+**If you have not been approved, sign-in still succeeds and then every API call fails**
+with 401 `oauth_problem="additional_authorization_required"`. That error says nothing
+about approval, so if you see it, this step is why.
+
+### 3. Install and configure
 
 ```bash
 git clone https://github.com/ryanagoetz/ff-helper
 cd ff-helper
 uv sync                    # or: pip install -e .
-
-cp .env.example .env       # then paste in your Client ID and Secret
 ```
 
-### 3. Sign in
+Then create a `.env` in the project root with your Client ID and Secret. It is gitignored:
+
+```
+YAHOO_CLIENT_ID=
+YAHOO_CLIENT_SECRET=
+
+# Must exactly match the Redirect URI registered on your Yahoo app. Use "oob" to fall
+# back to manual code paste if Yahoo rejects the localhost callback.
+YAHOO_REDIRECT_URI=https://localhost:8000/callback
+
+# Your league, e.g. 461.l.123456 -- setup_auth.py prints your leagues. Optional; it is
+# only the default for when you do not pass --league.
+FF_LEAGUE_KEY=
+
+# Seconds between draft-result polls during a live draft.
+FF_POLL_INTERVAL=2.0
+
+# Auction leagues only. Leave blank to use whatever Yahoo reports, or 200 if it reports
+# nothing. Set this if your league's budget is not $200 -- every dollar value depends on it.
+FF_AUCTION_BUDGET=
+
+# OAuth scope requested at sign-in. Leave blank: Yahoo grants fantasy access to an
+# approved app, and asking for a scope the app lacks fails with invalid_scope.
+FF_OAUTH_SCOPE=
+```
+
+### 4. Sign in
 
 ```bash
-python scripts/setup_auth.py
+uv run python scripts/setup_auth.py
 ```
 
 Open the URL it prints, approve access, and your browser will land on a page that **fails
@@ -131,10 +174,10 @@ The authorization code is in it.
 
 The script then prints your leagues. Paste the right `FF_LEAGUE_KEY` into `.env`.
 
-### 4. Build the ranking snapshot
+### 5. Build the ranking snapshot
 
 ```bash
-python scripts/fetch_rankings.py
+uv run python scripts/fetch_rankings.py
 ```
 
 This pulls the Yahoo player pool, FantasyFootballCalculator ADP, and FantasyPros consensus
@@ -228,8 +271,8 @@ Snapshots are cached per league, so nothing collides. Build one snapshot per lea
 point the app at whichever you're drafting:
 
 ```bash
-python scripts/fetch_rankings.py --league 461.l.111111   # snake league
-python scripts/fetch_rankings.py --league 461.l.222222   # auction league
+uv run python scripts/fetch_rankings.py --league 461.l.111111   # snake league
+uv run python scripts/fetch_rankings.py --league 461.l.222222   # auction league
 
 uv run ff-helper --league 461.l.111111
 uv run ff-helper --league 461.l.222222 --port 8778       # both at once, if drafts overlap
@@ -260,7 +303,7 @@ record — but you get told, rather than the board quietly rewriting itself unde
 ### Start here: the preflight check
 
 ```bash
-python scripts/doctor.py --all
+uv run python scripts/doctor.py --all
 ```
 
 Run this **first**, before the snapshot or anything else. It verifies sign-in, reads every
@@ -274,7 +317,7 @@ attention. Everything else in this section assumes it came back clean.
 ### Then backtest the model
 
 ```bash
-python scripts/replay.py
+uv run python scripts/replay.py
 ```
 
 Replays a completed draft pick by pick and shows what the engine *would* have recommended
