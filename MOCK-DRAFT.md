@@ -25,8 +25,9 @@ Depending on how Job A goes, Saturday looks like one of two things:
 
 | | What | How long | Why |
 |---|---|---|---|
-| **Job A** | Copy the sold list out of Yahoo and send it to me | 5 min | Decides whether pasting is possible at all. Blocking. |
-| **Job B** | Practise typing sales in ff-helper | 20 min | The path that works regardless of how Job A turns out. |
+| **Job A** | Copy the sold list out of Yahoo and send it to me | 5 min | Done — the parser now reads Yahoo's real format. Repeat only if the room looks different. |
+| **Job B** | Practise typing sales in ff-helper | 20 min | The path that works regardless. |
+| **Job C** | Run the bridge against the mock | 20 min | Proves the whole automated path before it matters. |
 
 **The mock is not your league.** ff-helper is configured for Bust A Move — 12 teams, your
 scoring, your team names. Do not try to make it track the mock draft; it will not match
@@ -136,6 +137,57 @@ Now break it on purpose, so you recognise it on Saturday:
 
 Stop the app with **Ctrl+C** and start it again. The board is empty. Nothing is written to
 disk.
+
+---
+
+---
+
+## Job C — test the bridge against the mock
+
+Now possible, because the copy format is known. The obstacle is that a mock's teams are
+strangers, and ff-helper refuses a sale whose buyer it cannot identify — correctly, since
+money charged to no team never leaves the room and overstates every price. So the mock
+needs a league config of its own.
+
+### 1. Let a few players sell, then build a config from the room
+
+Copy the draft-results panel and pipe it in. This reads the buyers out of the paste, so
+you are not typing twelve strangers' names while a draft runs:
+
+```bash
+uv run python scripts/mock_config.py --num-teams 12 < ~/paste.txt
+```
+
+It writes `data/league-mock.yaml`, borrowing Bust A Move's player pool rather than
+building an identical one — which saves the minute you do not have mid-mock. Check the
+team list it prints; `Your Team` should be marked as you.
+
+### 2. Run a second copy of the app against it
+
+On a different port, so your real league's instance is untouched:
+
+```bash
+uv run ff-helper --offline data/league-mock.yaml --port 8779
+```
+
+### 3. Paste the board into it
+
+Paste the same text into **Paste the draft room** and click Apply. Expect every sale to
+land, the money in the room to fall by the total of the prices, and your own budget to
+drop by what "Your Team" bought.
+
+### 4. Then try the automated reader
+
+Install [Tampermonkey](https://www.tampermonkey.net/), create a new script, and paste in
+`scripts/yahoo_bridge.user.js`. Change the port in it to **8779** for the mock. Reload the
+draft room; a badge appears bottom-right.
+
+Watch for: does it read the panel without you doing anything, does the badge count go up
+as players sell, and does the board in ff-helper match the room? Click the badge to pause.
+
+**If it refuses with a buyer complaint**, a team joined or renamed after you built the
+config — rebuild it with a fresh paste. That is the expected failure and it is loud on
+purpose.
 
 ---
 

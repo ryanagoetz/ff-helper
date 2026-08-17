@@ -58,6 +58,14 @@ class OfflineLeague:
     # truncates. Only buyers need these: an unresolved buyer leaves its money in the
     # room and overstates every price, where an unresolved player merely goes unnoticed.
     team_aliases: dict[str, str] = field(default_factory=dict)
+    # Which league's cached snapshot to read. Normally this league's own, but a throwaway
+    # league -- a mock, say -- can borrow one rather than spend a minute rebuilding an
+    # identical player pool. Only the league settings differ; the players do not.
+    snapshot_key: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.snapshot_key:
+            self.snapshot_key = self.league.league_key
 
 
 def _require(config: dict, key: str, path: Path):
@@ -153,7 +161,13 @@ def load_config(path: Path) -> OfflineLeague:
         str(alias): str(target)
         for alias, target in (config.get("team_aliases") or {}).items()
     }
-    return OfflineLeague(league=league, teams=teams, notes=notes, team_aliases=aliases)
+    return OfflineLeague(
+        league=league,
+        teams=teams,
+        notes=notes,
+        team_aliases=aliases,
+        snapshot_key=str(config.get("snapshot_league_key") or ""),
+    )
 
 
 def _build_teams(config: dict, league: League, num_teams: int, path: Path) -> list[Team]:

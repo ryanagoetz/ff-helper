@@ -222,3 +222,18 @@ class TestDefenceSupplement:
         players, notes = offline.supplement_positions(pool, rows, "offline.l.1")
         assert len(players) == 1
         assert notes == []
+
+
+class TestBorrowingASnapshot:
+    """A throwaway league -- a mock -- should not have to rebuild an identical pool."""
+
+    def test_snapshot_key_defaults_to_the_league_itself(self, tmp_path):
+        result = offline.load_config(_write(tmp_path, _config()))
+        assert result.snapshot_key == result.league.league_key
+
+    def test_a_league_can_borrow_another_ones_snapshot(self, tmp_path):
+        """A mock borrows the real league's pool: same players, different settings."""
+        config = _config(league_id="mock", snapshot_league_key="offline.l.107878")
+        result = offline.load_config(_write(tmp_path, config))
+        assert result.league.league_key == "offline.l.mock"
+        assert result.snapshot_key == "offline.l.107878"

@@ -375,12 +375,20 @@ def bootstrap_offline(config_path: Path, keeper_csv: Path | None = None) -> Assi
         raise SystemExit(str(exc)) from exc
 
     league = config.league
-    snapshot = cache.load(league.league_key)
+    snapshot = cache.load(config.snapshot_key)
     if snapshot is None:
         raise SystemExit(
-            f"No ranking snapshot found for {league.name}.\n"
-            f"Run `python scripts/fetch_rankings.py --offline {config_path}` first."
+            f"No ranking snapshot found for {league.name} "
+            f"(looked for {config.snapshot_key}).\n"
+            f"Run `python scripts/fetch_rankings.py --offline {config_path}` first, or set "
+            "'snapshot_league_key' in the config to borrow another league's."
         )
+    if config.snapshot_key != league.league_key:
+        assistant_note = (
+            f"Player pool borrowed from {config.snapshot_key}. Fine for a mock; the "
+            "players are the same and only the league settings differ."
+        )
+        config.notes.append(assistant_note)
 
     lock = threading.Lock()
     state = DraftState(league=league, teams=config.teams)
