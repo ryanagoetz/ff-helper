@@ -49,6 +49,14 @@ scoring:
 # turnovers, safeties, blocks, points-allowed tiers). Kickers and defenses are ranked by
 # consensus instead of projection, which is the same thing the online path does.
 
+# Draft-room spellings that differ from the names above. Only buyers need these: an
+# unresolved buyer leaves its money in the room and overstates every price the app quotes,
+# where an unresolved player is merely a sale the board misses. Fill these in from the
+# mock draft if the room shows anything different -- "Rx..." especially, since it is your
+# team and a mismatch there corrupts max bid.
+team_aliases: {}
+#  "Rx…": "Rx..."
+
 # Team names as of 2026-08-17. They can change up to the draft; if one does, edit it here
 # and in any keeper CSV, since both match on the name.
 my_team: "Rx..."

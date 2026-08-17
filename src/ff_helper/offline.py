@@ -25,7 +25,7 @@ Everything else is intact, including the parts that actually make this app worth
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -54,6 +54,10 @@ class OfflineLeague:
     league: League
     teams: list[Team]
     notes: list[str]
+    # Draft-room spellings that differ from the settings page, e.g. a name the room
+    # truncates. Only buyers need these: an unresolved buyer leaves its money in the
+    # room and overstates every price, where an unresolved player merely goes unnoticed.
+    team_aliases: dict[str, str] = field(default_factory=dict)
 
 
 def _require(config: dict, key: str, path: Path):
@@ -145,7 +149,11 @@ def load_config(path: Path) -> OfflineLeague:
     )
 
     teams = _build_teams(config, league, num_teams, path)
-    return OfflineLeague(league=league, teams=teams, notes=notes)
+    aliases = {
+        str(alias): str(target)
+        for alias, target in (config.get("team_aliases") or {}).items()
+    }
+    return OfflineLeague(league=league, teams=teams, notes=notes, team_aliases=aliases)
 
 
 def _build_teams(config: dict, league: League, num_teams: int, path: Path) -> list[Team]:

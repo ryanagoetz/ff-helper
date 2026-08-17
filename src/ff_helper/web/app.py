@@ -22,8 +22,8 @@ from pydantic import BaseModel
 from ff_helper import offline
 from ff_helper.assistant import Assistant
 from ff_helper.config import Settings, load_settings
-from ff_helper.draft import keepers
-from ff_helper.draft.state import DraftState
+from ff_helper.draft import bridge, keepers
+from ff_helper.draft.state import BridgeSale, DraftState
 from ff_helper.draft.sync import DraftSync
 from ff_helper.rankings import cache
 from ff_helper.rankings.players import PlayerRegistry
@@ -71,6 +71,32 @@ def _serialize(pick, is_auction: bool) -> dict:
     return common
 
 
+class PastedBoard(BaseModel):
+    text: str
+
+
+def _resolution_failure(report: bridge.ResolutionReport) -> str:
+    """Explain exactly which rows blocked the paste, and why it refused rather than part-applied."""
+    problems: list[str] = []
+    if report.unknown_buyers:
+        # Listed first because it is the expensive one: a sale charged to no team leaves
+        # the money in the room, so inflation reads the league as richer than it is.
+        names = ", ".join(sorted({sale.buyer or "(blank)" for sale in report.unknown_buyers}))
+        problems.append(
+            f"{len(report.unknown_buyers)} sale(s) name a buyer that is not a team in this "
+            f"league: {names}. Fix the name, or add an alias under 'team_aliases' in the "
+            "league config."
+        )
+    if report.unknown_players:
+        names = ", ".join(sale.name for sale in report.unknown_players[:8])
+        problems.append(f"{len(report.unknown_players)} player(s) did not match: {names}")
+    if report.missing_price:
+        names = ", ".join(sale.name for sale in report.missing_price[:8])
+        problems.append(f"{len(report.missing_price)} auction sale(s) have no price: {names}")
+    problems.append("Nothing was applied; the board is unchanged.")
+    return " ".join(problems)
+
+
 class ManualPick(BaseModel):
     player_key: str
     pick: int | None = None
@@ -82,6 +108,22 @@ class ManualPick(BaseModel):
 
 def create_app(assistant: Assistant, sync: DraftSync | None) -> FastAPI:
     app = FastAPI(title="ff-helper", docs_url=None, redoc_url=None)
+
+    # Built once and kept: the resolver memoizes every name it has looked up, including
+    # the ones it failed to match. Rebuilding per request would throw that away and pay
+    # for a full fuzzy scan of the pool again on every paste.
+    cached: list[bridge.BridgeResolver] = []
+
+    def _resolver() -> bridge.BridgeResolver:
+        if not cached:
+            cached.append(
+                bridge.BridgeResolver(
+                    assistant.registry,
+                    assistant.state.teams,
+                    team_aliases=assistant.team_aliases,
+                )
+            )
+        return cached[0]
 
     @app.get("/")
     def index() -> FileResponse:
@@ -128,6 +170,19 @@ def create_app(assistant: Assistant, sync: DraftSync | None) -> FastAPI:
         """Mark a player drafted by hand, for when the Yahoo feed stalls."""
         if body.player_key not in assistant.valuations.valuations:
             raise HTTPException(status_code=404, detail="Unknown player")
+
+        # A player already on the board must not be recorded twice. `spent` sums board
+        # entries without deduplicating by player, so a second entry charges his buyer a
+        # second time. The UI hides drafted players from search, but that guard is stale
+        # for as long as it takes to type a price and choose a buyer -- and a pasted board
+        # landing in that window is exactly when this fires.
+        existing = assistant.state.pick_for_player(body.player_key)
+        if existing is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{assistant._player_name(body.player_key)} is already on the board "
+                f"at pick {existing}. Recording him again would charge his buyer twice.",
+            )
         if assistant.is_auction:
             # Both halves matter. Without the price the budget is wrong; without the buyer
             # the money leaves nobody's budget, so the league looks richer than it is and
@@ -147,6 +202,52 @@ def create_app(assistant: Assistant, sync: DraftSync | None) -> FastAPI:
                 body.player_key, pick=body.pick, cost=body.cost, team_key=body.team_key
             )
         return {"pick": entry.pick, "player_key": entry.player_key, "cost": entry.cost}
+
+    @app.post("/api/board/paste")
+    def paste_board(body: PastedBoard) -> dict:
+        """Ingest a full reading of the draft room, pasted from the Yahoo tab.
+
+        Same origin as the app, so this needs no CORS, no browser-policy exemption and no
+        extension -- which is why it exists before any automated reader. It is also the
+        recovery path if an automated reader breaks mid-draft.
+
+        Deliberately all-or-nothing on resolution failures. A human pasted this and is
+        looking at the result, so refusing with a specific complaint is more useful than
+        applying nine of ten sales and burying the tenth in a notes list.
+        """
+        sales = bridge.parse_paste(body.text)
+        if not sales:
+            raise HTTPException(
+                status_code=400,
+                detail="Nothing in that paste looked like a sale. Expected lines such as "
+                "'Ja'Marr Chase\t$55\tTeam Name'.",
+            )
+
+        report = _resolver().resolve_all(sales, is_auction=assistant.is_auction)
+
+        if not report.ok:
+            raise HTTPException(status_code=422, detail=_resolution_failure(report))
+
+        with assistant.lock:
+            diff = assistant.state.apply_bridge(
+                [
+                    BridgeSale(player_key=key, team_key=team, cost=sale.cost)
+                    for sale, key, team in report.resolved
+                ],
+                timestamp=time.time(),
+            )
+
+        if diff.rejected:
+            raise HTTPException(status_code=409, detail=diff.rejected)
+
+        return {
+            "read": len(sales),
+            "applied": len(diff.applied),
+            "corrected": len(diff.corrected),
+            "removed": len(diff.removed),
+            "unchanged": diff.unchanged,
+            "fuzzy": [{"name": name, "player_key": key} for name, key in report.fuzzy],
+        }
 
     @app.post("/api/undo")
     def undo() -> dict:
@@ -263,6 +364,7 @@ def bootstrap_offline(config_path: Path, keeper_csv: Path | None = None) -> Assi
 
     state.apply_keepers(keeper_set.kept)
     assistant = Assistant.build(league, state, snapshot, lock=lock)
+    assistant.team_aliases = config.team_aliases
     assistant.notes.extend(config.notes)
     assistant.notes.extend(keeper_set.notes)
     assistant.notes.append(

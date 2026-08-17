@@ -116,7 +116,6 @@ class TestLoudFailures:
             load(_write(tmp_path, rows))
 
     def test_no_player_column(self, tmp_path):
-        header = ["Rank", "Team", "ADP (Y!)"]
         path = tmp_path / "adp.csv"
         path.write_text('"Rank","Team","ADP (Y!)"\n"1","DET","1"\n', encoding="utf-8")
         with pytest.raises(AdpError, match="no player column"):

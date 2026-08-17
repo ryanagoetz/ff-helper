@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ff_helper.draft.state import DraftState
 from ff_helper.engine import replacement
@@ -40,6 +40,10 @@ class Assistant:
     notes: list[str]
     # Populated only for auction leagues.
     dollars: DollarValues | None = None
+    # Draft-room spellings of team names that differ from the league settings page, so a
+    # buyer can still be resolved. A buyer we cannot resolve costs more than a player we
+    # cannot resolve: the money never leaves the room and every price is overstated.
+    team_aliases: dict[str, str] = field(default_factory=dict)
 
     @property
     def is_auction(self) -> bool:

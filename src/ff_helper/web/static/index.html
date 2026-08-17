@@ -144,6 +144,21 @@
     </div>
 
     <div class="panel">
+      <div class="label" style="margin-bottom:8px">Paste the draft room</div>
+      <div class="muted" style="margin-bottom:8px">
+        Select-all-copy the sold list in the Yahoo tab and paste it here. Send the
+        <b>whole</b> board every time — it is matched by player, so re-pasting is safe and
+        catches anything missed.
+      </div>
+      <textarea id="pasteBox" rows="4" placeholder="Ja'Marr Chase&#9;$55&#9;Team Name"
+        style="width:100%; box-sizing:border-box; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-family:inherit; font-size:13px"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button id="pasteBtn">Apply pasted board</button>
+      </div>
+      <div id="pasteMessage" style="display:none; margin-top:8px; padding:8px 10px; border-radius:8px; font-size:13px"></div>
+    </div>
+
+    <div class="panel">
       <div class="label" style="margin-bottom:8px">My roster</div>
       <table><tbody id="rosterBody"></tbody></table>
       <div class="muted" id="rosterCounts" style="margin-top:8px"></div>
@@ -164,7 +179,17 @@ let isAuction = false;
 
 async function getJSON(url, opts) {
   const res = await fetch(url, opts);
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    // Surface FastAPI's `detail` rather than the raw JSON envelope. These messages are
+    // written to be read mid-draft, and {"detail":"..."} is not.
+    const body = await res.text();
+    let message = body;
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && parsed.detail) message = parsed.detail;
+    } catch (e) { /* not JSON; show it as-is */ }
+    throw new Error(message);
+  }
   return res.json();
 }
 
@@ -515,6 +540,44 @@ $("searchResults").addEventListener("click", e => {
   if (!row) return;
   highlighted = parseInt(row.dataset.index, 10) || 0;
   if (chooseHighlighted() && !isAuction) submitPick();
+});
+
+function sayPaste(text, kind) {
+  const box = $("pasteMessage");
+  box.textContent = text;
+  box.style.display = text ? "block" : "none";
+  const colours = { error: ["#3a1d1d", "#f8b4b4"], ok: ["#16301f", "#9ae6b4"] }[kind]
+    || ["var(--panel-2)", "var(--muted)"];
+  box.style.background = colours[0];
+  box.style.color = colours[1];
+}
+
+$("pasteBtn").addEventListener("click", async () => {
+  const text = $("pasteBox").value;
+  if (!text.trim()) { sayPaste("Nothing pasted.", "error"); return; }
+  sayPaste("Reading…", "hint");
+  let res;
+  try {
+    res = await getJSON("/api/board/paste", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    });
+  } catch (err) {
+    // The server refuses the whole paste rather than applying part of it, so the board is
+    // untouched and the message says exactly which rows blocked it.
+    sayPaste(String(err.message || err), "error");
+    return;
+  }
+  const bits = [`read ${res.read}`, `${res.applied} new`];
+  if (res.corrected) bits.push(`${res.corrected} corrected`);
+  if (res.removed) bits.push(`${res.removed} removed`);
+  if (res.unchanged) bits.push(`${res.unchanged} unchanged`);
+  let message = bits.join(", ") + ".";
+  if (res.fuzzy && res.fuzzy.length) {
+    message += ` Matched by similarity: ${res.fuzzy.map(f => f.name).join(", ")} — check these.`;
+  }
+  sayPaste(message, "ok");
+  refresh();
 });
 
 $("undoBtn").addEventListener("click", async () => {

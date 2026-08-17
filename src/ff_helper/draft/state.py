@@ -18,6 +18,36 @@ from dataclasses import dataclass, field
 from ff_helper.yahoo.models import DraftPick, KeptPlayer, League, Team
 
 
+@dataclass(frozen=True)
+class BridgeSale:
+    """One completed sale, already resolved to keys.
+
+    Resolution happens before this point on purpose: an unresolvable buyer must never
+    reach the board, because money charged to no team never leaves the room, and the
+    inflation model then reads the league as richer than it is and overstates every
+    remaining price.
+    """
+
+    player_key: str
+    team_key: str
+    cost: int | None = None
+
+
+@dataclass
+class BridgeDiff:
+    """What one reading of the draft room changed."""
+
+    applied: list[DraftPick] = field(default_factory=list)
+    corrected: list[DraftPick] = field(default_factory=list)
+    removed: list[DraftPick] = field(default_factory=list)
+    unchanged: int = 0
+    rejected: str | None = None
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.applied or self.corrected or self.removed)
+
+
 def pick_number(round_number: int, slot: int, num_teams: int, *, snake: bool = True) -> int:
     """Overall pick number for a draft slot in a given round.
 
@@ -59,6 +89,19 @@ class DraftState:
     synced: dict[int, DraftPick] = field(default_factory=dict)
     # Picks entered by hand, same keying. Used when the feed lags or stalls.
     manual: dict[int, DraftPick] = field(default_factory=dict)
+    # Picks read off the Yahoo draft room by the bridge, same keying.
+    bridge: dict[int, DraftPick] = field(default_factory=dict)
+
+    # player_key -> the pick number that player was given, for bridge-sourced sales.
+    #
+    # This exists because a pick number is not an identity in an auction; it is a display
+    # ordinal. The sale's identity is the player. Keying only by pick number means that if
+    # the same player ever arrives under a different number -- the room reorders, a row
+    # misparses once, the reader restarts and renumbers -- he lands on the board twice and
+    # ``spent`` charges his buyer twice, because it sums board entries and never
+    # deduplicates by player. Allocating a number once per player and reusing it makes
+    # that impossible rather than unlikely.
+    bridge_order: dict[str, int] = field(default_factory=dict)
 
     # Players already rostered before the draft. Kept separate from picks on purpose:
     # they occupy roster spots and money without occupying a pick number, and conflating
@@ -107,10 +150,40 @@ class DraftState:
 
     @property
     def board(self) -> dict[int, DraftPick]:
-        """Merged view. Yahoo wins where both have an opinion."""
+        """Merged view. Yahoo wins where both have an opinion.
+
+        Precedence is manual < bridge < synced. The API is the system of record and wins
+        outright. The bridge outranks a hand-entered pick because it is reading the room
+        rather than remembering it -- but only ever for a pick number it was allocated,
+        and ``apply_bridge`` refuses to allocate one that a human already owns for that
+        player, so the two cannot silently shadow each other.
+        """
         merged = dict(self.manual)
+        merged.update(self.bridge)
         merged.update(self.synced)
         return merged
+
+    def pick_for_player(self, player_key: str) -> int | None:
+        """The pick number a player already occupies on the board, if any."""
+        for number, pick in self.board.items():
+            if pick.player_key == player_key:
+                return number
+        return None
+
+    def next_free_pick(self) -> int:
+        """Smallest pick number no writer has claimed.
+
+        Shared by every writer so that a hand-entered sale and a bridge-read one can never
+        be allocated the same slot. ``record_manual`` used to default to ``current_pick``,
+        which is derived from how many picks exist rather than which numbers are free --
+        with a bridge running that collides routinely, and a collision makes the human's
+        entry vanish from the merged board with no money charged and no warning.
+        """
+        taken = set(self.synced) | set(self.manual) | set(self.bridge)
+        number = 1
+        while number in taken:
+            number += 1
+        return number
 
     @property
     def drafted_player_keys(self) -> set[str]:
@@ -332,7 +405,11 @@ class DraftState:
         drive every dollar value, so a pick recorded without its price would quietly
         corrupt the inflation model.
         """
-        target = pick if pick is not None else self.current_pick
+        # A free slot, not ``current_pick``. The old default counted how many picks exist
+        # rather than which numbers are unclaimed, so with a bridge running it landed on a
+        # slot the bridge already held -- and since the bridge outranks manual in ``board``,
+        # the sale disappeared entirely: no money charged, no roster spot, no warning.
+        target = pick if pick is not None else self.next_free_pick()
 
         if team_key is None and not self.is_auction:
             # Snake drafts have a deterministic owner for every pick number.
@@ -349,6 +426,85 @@ class DraftState:
         )
         self.manual[target] = entry
         return entry
+
+    def apply_bridge(
+        self,
+        sales: list[BridgeSale],
+        *,
+        timestamp: float,
+        shrink_tolerance: int = 2,
+    ) -> BridgeDiff:
+        """Fold in a full reading of the draft room. A snapshot, not an append.
+
+        Every call carries the complete set of sales the reader can see, so this has to be
+        able to *remove* as well as add -- otherwise a sale that changes pick number
+        between readings stays on the board twice and its buyer is charged twice.
+
+        A payload that shrinks is refused rather than applied. Sales do not un-happen, so a
+        board that lost rows almost always means the reading failed -- a filter got
+        applied, the tab navigated, a selector stopped matching -- and acting on it would
+        hand money back to teams that already spent it. ``shrink_tolerance`` allows a
+        row or two of jitter; beyond that the whole payload is rejected and the board is
+        left exactly as it was.
+        """
+        seen: dict[str, BridgeSale] = {}
+        for sale in sales:
+            # Last wins: a repeated player in one payload is a reading artefact, and
+            # charging him twice is the failure this whole method exists to prevent.
+            seen[sale.player_key] = sale
+
+        removed: list[DraftPick] = []
+        gone = [key for key in self.bridge_order if key not in seen]
+        if len(gone) > shrink_tolerance:
+            return BridgeDiff(
+                rejected=(
+                    f"reading dropped {len(gone)} of {len(self.bridge_order)} sales; "
+                    "treating it as a failed read rather than removing them"
+                )
+            )
+
+        applied: list[DraftPick] = []
+        corrected: list[DraftPick] = []
+        unchanged = 0
+
+        for player_key, sale in seen.items():
+            number = self.bridge_order.get(player_key)
+            if number is None:
+                # A pick the human already entered for this player keeps its number, so
+                # the two reconcile into one entry instead of racing for a slot.
+                number = self.pick_for_player(player_key) or self.next_free_pick()
+                self.bridge_order[player_key] = number
+
+            entry = DraftPick(
+                pick=number,
+                round=(number - 1) // self.num_teams + 1,
+                team_key=sale.team_key,
+                player_key=player_key,
+                cost=sale.cost,
+            )
+            previous = self.bridge.get(number)
+            self.bridge[number] = entry
+            # A hand-entered pick for this player has served its purpose.
+            self.manual.pop(number, None)
+
+            if previous is None:
+                applied.append(entry)
+            elif previous.cost != entry.cost or previous.team_key != entry.team_key:
+                corrected.append(entry)
+            else:
+                unchanged += 1
+
+        for player_key in gone:
+            number = self.bridge_order.pop(player_key)
+            entry = self.bridge.pop(number, None)
+            if entry is not None:
+                removed.append(entry)
+
+        self.last_sync = timestamp
+        self.last_sync_error = None
+        return BridgeDiff(
+            applied=applied, corrected=corrected, removed=removed, unchanged=unchanged
+        )
 
     # -- auction budgets ---------------------------------------------------------------
 
