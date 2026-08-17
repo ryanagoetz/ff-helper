@@ -479,6 +479,11 @@ class TestAuctionKeepers:
         assert state.league_money_remaining() == BUDGET * NUM_TEAMS - 40 * NUM_TEAMS
 
     def test_expensive_keepers_deflate_prices(self):
+        """Keeper salaries are money nobody can bid, so par values fall.
+
+        The deflation lands in ``dollars_per_vor``, not in ``inflation`` -- see
+        ``test_keeper_salary_does_not_leak_into_inflation`` for why that split matters.
+        """
         cheap, _ = auction_state(
             [
                 KeptPlayer(player_key=f"461.p.RB{i}", team_key=f"461.l.1.t.{i + 1}", cost=1)
@@ -491,7 +496,27 @@ class TestAuctionKeepers:
                 for i in range(NUM_TEAMS)
             ]
         )
-        assert pricey.current_inflation() < cheap.current_inflation()
+        assert pricey.dollars.dollars_per_vor < cheap.dollars.dollars_per_vor
+        # And it reaches the prices themselves, for a player nobody kept.
+        assert pricey.dollars.par["461.p.WR0"] < cheap.dollars.par["461.p.WR0"]
+
+    def test_keeper_salary_does_not_leak_into_inflation(self):
+        """Inflation must read 1.0 pre-draft however expensive the keepers were.
+
+        ``par - 1`` is ``VOR * dollars_per_vor`` and ``inflation_factor`` divides remaining
+        money by remaining par surplus, so the keeper-driven scalar cancels exactly. That
+        cancellation is the reason keepers are priced out of the pool in the first place: it
+        keeps the inflation clamp free for genuine market movement, so ``inflation`` carries
+        one signal (is the room overspending?) rather than two.
+        """
+        for cost in (1, 90):
+            assistant, _ = auction_state(
+                [
+                    KeptPlayer(player_key=f"461.p.RB{i}", team_key=f"461.l.1.t.{i + 1}", cost=cost)
+                    for i in range(NUM_TEAMS)
+                ]
+            )
+            assert assistant.current_inflation() == pytest.approx(1.0, abs=1e-9)
 
 
 class TestKeeperStateApi:
