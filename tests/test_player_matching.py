@@ -111,3 +111,45 @@ class TestInitialsStillWorkWhenUnambiguous:
         registry = PlayerRegistry(pool)
         row = SourceRow(name="Mike Williams", position="WR", team="LAC", source="t")
         assert registry.find(row).player_key == "p.2"
+
+
+class TestTeamDefences:
+    """A defense is identified by its team; every source spells the name differently."""
+
+    def _pool(self):
+        return [
+            _player("d.1", "Seattle Defense", "DEF", "SEA"),
+            _player("d.2", "Dallas Defense", "DEF", "DAL"),
+        ]
+
+    def test_matches_across_wildly_different_names(self):
+        registry = PlayerRegistry(self._pool())
+        for name in ("Seattle Seahawks", "Seahawks", "Seattle D/ST", "Seattle Defense"):
+            row = SourceRow(name=name, position="DEF", team="SEA", source="t")
+            assert registry.find(row).player_key == "d.1", name
+
+    def test_team_aliases_still_resolve(self):
+        registry = PlayerRegistry([_player("d.1", "Jacksonville Defense", "DEF", "JAX")])
+        row = SourceRow(name="Jaguars", position="DEF", team="JAC", source="t")
+        assert registry.find(row).player_key == "d.1"
+
+    def test_a_shared_team_abbreviation_is_not_resolved_by_team(self):
+        """Two defenses on one abbreviation means the team identifies nobody."""
+        pool = [
+            _player("d.1", "Alpha Defense", "DEF", "FA"),
+            _player("d.2", "Beta Defense", "DEF", "FA"),
+        ]
+        registry = PlayerRegistry(pool)
+        row = SourceRow(name="Beta Defense", position="DEF", team="FA", source="t")
+        # Falls through to name matching rather than collapsing onto the first.
+        assert registry.find(row).player_key == "d.2"
+
+    def test_a_defence_without_a_team_falls_back_to_the_name(self):
+        registry = PlayerRegistry(self._pool())
+        row = SourceRow(name="Dallas Defense", position="DEF", team="", source="t")
+        assert registry.find(row).player_key == "d.2"
+
+    def test_skill_players_are_unaffected(self):
+        registry = PlayerRegistry([_player("p.1", "Kenneth Walker", "RB", "SEA")])
+        row = SourceRow(name="Someone Else", position="RB", team="SEA", source="t")
+        assert registry.find(row) is None

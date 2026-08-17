@@ -87,7 +87,8 @@ TEAM_ALIASES: dict[str, str] = {
     "CLV": "CLE",
 }
 
-# Defenses are named by city, nickname, or abbreviation depending on the source.
+# Defenses are named by city, nickname, or abbreviation depending on the source -- which
+# is why they are matched on team rather than name. See PlayerRegistry.find.
 DST_POSITIONS = {"DST", "D/ST", "DEF"}
 
 
@@ -206,6 +207,10 @@ class PlayerRegistry:
         self._index: dict[tuple[str, str], list[YahooPlayer]] = {}
         self._by_name: dict[str, list[YahooPlayer]] = {}
         self._by_surname: dict[tuple[str, str], list[YahooPlayer]] = {}
+        # Team defenses, keyed by team rather than name -- see find(). Lists, not single
+        # players: if two defenses share a team abbreviation the team no longer
+        # identifies anyone, and collapsing them would merge distinct units.
+        self._by_def_team: dict[str, list[YahooPlayer]] = {}
 
         for player in players:
             position = normalize_position(player.primary_position)
@@ -217,10 +222,24 @@ class PlayerRegistry:
             if len(parts) >= 2:
                 self._by_surname.setdefault((parts[-1], position), []).append(player)
 
+            if position in DST_POSITIONS:
+                team_abbr = normalize_team(player.team_abbr)
+                if team_abbr:
+                    self._by_def_team.setdefault(team_abbr, []).append(player)
+
     def find(self, row: SourceRow) -> YahooPlayer | None:
         """Resolve a source row to a Yahoo player, or None."""
         position = normalize_position(row.position)
         team = normalize_team(row.team)
+
+        # A team defense is identified by its team, not its name. Every source spells it
+        # differently -- "Seattle Defense", "Seattle Seahawks", "Seahawks" -- and none of
+        # those match each other by string. Matching on the team is not a heuristic here,
+        # it is the actual identity: there is exactly one defense per team.
+        if position in DST_POSITIONS and team:
+            units = self._by_def_team.get(team, [])
+            if len(units) == 1:
+                return units[0]
 
         for variant in name_variants(row.name):
             # An initial is not an identity. "b robinson" fits both Bijan and Brian
