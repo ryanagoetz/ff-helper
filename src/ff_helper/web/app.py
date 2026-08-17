@@ -107,9 +107,10 @@ def _resolution_failure(report: bridge.ResolutionReport) -> str:
         # the money in the room, so inflation reads the league as richer than it is.
         names = ", ".join(sorted({sale.buyer or "(blank)" for sale in report.unknown_buyers}))
         problems.append(
-            f"{len(report.unknown_buyers)} sale(s) name a buyer that is not a team in this "
-            f"league: {names}. Fix the name, or add an alias under 'team_aliases' in the "
-            "league config."
+            f"{len(report.unknown_buyers)} sale(s) name a buyer this league has no room "
+            f"for: {names}. Most often the league is configured with fewer teams than the "
+            "draft room has -- check num_teams. Otherwise fix the name, or add an alias "
+            "under 'team_aliases'."
         )
     if report.unknown_players:
         names = ", ".join(sale.name for sale in report.unknown_players[:8])

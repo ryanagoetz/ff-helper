@@ -657,3 +657,52 @@ class TestShortBuyerNames:
 
         assert _fold("Rx…") == _fold("Rx...")
         assert _fold("Team 2…") == _fold("Team 2")
+
+
+class TestTheLiveDraftRoom:
+    """Whole-page text from a running Yahoo auction, not a tidied copy of one panel.
+
+    This is what the reader actually sends, and it differs from the results-panel copy:
+    names appear once rather than twice, buyer and price lines carry leading tabs, round
+    headings are upper-case, and the page above the table is full of numbers and dollar
+    amounts that must not be mistaken for sales.
+    """
+
+    def _text(self) -> str:
+        return (FIXTURES / "yahoo_draft_room_live.txt").read_text(encoding="utf-8")
+
+    def test_every_sale_and_nothing_else(self):
+        sales = parse_paste(self._text())
+        assert len(sales) == 31
+
+    def test_the_nomination_counter_is_not_a_sale(self):
+        """A bare "8" above the table swallowed the live bid as its price."""
+        names = {sale.name for sale in parse_paste(self._text())}
+        assert not any("nomination" in name.lower() for name in names)
+
+    def test_the_live_bid_and_budget_panel_are_not_sales(self):
+        sales = parse_paste(self._text())
+        assert all(sale.buyer and not sale.buyer.startswith("$") for sale in sales)
+        assert all(sale.cost and sale.cost > 0 for sale in sales)
+
+    def test_fields_land_correctly_without_the_repeated_name(self):
+        sales = {sale.line: sale for sale in parse_paste(self._text())}
+        assert sales[31].name == "T. Higgins"
+        assert sales[31].position == "WR"
+        assert sales[31].team_abbr == "CIN"
+        assert sales[31].cost == 32
+        assert sales[31].buyer == "Team 8"
+
+    def test_an_injury_flag_before_the_position_does_not_shift_the_fields(self):
+        sales = {sale.line: sale for sale in parse_paste(self._text())}
+        assert sales[29].name == "B. Hall"
+        assert sales[29].position == "RB"
+        assert sales[29].cost == 31
+
+    def test_your_own_team_is_recognised_however_yahoo_labels_it(self, assistant):
+        from ff_helper.draft.bridge import BridgeResolver
+
+        resolver = BridgeResolver(assistant.registry, assistant.state.teams)
+        mine = next(t.team_key for t in assistant.state.teams if t.is_mine)
+        for label in ("Your Team", "You", "you"):
+            assert resolver.resolve_team(label)[0] == mine, label

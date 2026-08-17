@@ -109,7 +109,8 @@ class BridgeResolver:
             # without this every one of your own purchases fails to resolve -- and your
             # budget is the number the whole app exists to produce.
             if team.is_mine:
-                self._by_team_name[YOUR_TEAM] = team.team_key
+                for label in YOUR_TEAM_LABELS:
+                    self._by_team_name[label] = team.team_key
         for alias, target in (team_aliases or {}).items():
             resolved = self._by_team_name.get(_fold(target))
             if resolved:
@@ -208,7 +209,10 @@ class BridgeResolver:
             self._assigned[folded] = team.team_key
             return team.team_key, "assigned"
 
-        return None, ""
+        # Every slot is spoken for. Almost always this means the league is configured with
+        # fewer teams than the room actually has, so say that rather than leaving the
+        # caller to report a mysterious unresolvable buyer.
+        return None, "no free slot"
 
     def resolve_all(self, sales: list[RawSale], *, is_auction: bool) -> ResolutionReport:
         report = ResolutionReport()
@@ -276,6 +280,12 @@ def _fold(value: str) -> str:
 # the end of the record backwards, because the only genuinely optional parts -- the
 # repeated name and the injury flag -- are at the front.
 _PICK_LINE = re.compile(r"^(\d{1,3})\s*$")
+
+# The results table announces itself with a header row. Everything above it is live draft
+# furniture -- the nomination counter, the current bid, the budget table -- and a bare
+# number up there ("8 nominations until your turn") otherwise starts a record that then
+# swallows the current bid as its price and invents a sale.
+_RESULTS_HEADER = re.compile(r"^pick\b.*\bplayer\b.*\bcost\b", re.IGNORECASE)
 _BYE_LINE = re.compile(r"^bye\b", re.IGNORECASE)
 _ROUND_LINE = re.compile(r"^round\s+\d+\s*$", re.IGNORECASE)
 _PRICE_LINE = re.compile(r"^\$\s*(\d{1,4})$")
@@ -284,13 +294,23 @@ _PRICE_LINE = re.compile(r"^\$\s*(\d{1,4})$")
 # ceiling on that, so a stray number on the page cannot swallow half the document.
 _MAX_RECORD_LINES = 12
 
-# Yahoo labels the reader's own team this way rather than by name.
+# How Yahoo labels the reader's own team rather than naming it. The draft-results panel
+# and the budget panel do not agree with each other, so both spellings are needed.
 YOUR_TEAM = "your team"
+YOUR_TEAM_LABELS = {"your team", "you", "my team"}
 
 
 def parse_yahoo_results(text: str) -> list[RawSale]:
     """Read Yahoo's draft-results panel as copied from the browser."""
     lines = [line.strip() for line in text.splitlines()]
+
+    # Start at the results header when there is one, so page chrome above it cannot be
+    # read as sales. Without a header -- a hand-tidied paste, say -- read the lot.
+    first = next(
+        (index + 1 for index, line in enumerate(lines) if _RESULTS_HEADER.match(line)), 0
+    )
+    lines = lines[first:]
+
     starts = [
         index
         for index, line in enumerate(lines)
