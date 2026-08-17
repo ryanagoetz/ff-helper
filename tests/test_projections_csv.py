@@ -56,6 +56,35 @@ class TestParsing:
         assert rows[0].stats["rec"] == 40
         assert rows[0].stats["fum_lost"] == 1
 
+    def test_reads_a_4for4_rankings_export(self, tmp_path):
+        """Shaped like the real export: quoted headers, "FF Pts", no plain position column.
+
+        4for4 encodes position inside "Position-Rank" as "RB-01", and spells the total
+        "FF Pts" rather than "FPTS". Both were misses on the first pass.
+        """
+        header = '"Rank","Player","Team","BYE","Position-Rank","FF Pts","VOR","ADP ( Average )"'
+        body = "\n".join(
+            f'"{i + 1}","Player{i}","DET","6","RB-{i + 1:02d}","{276.7 - i}","160","{i + 1}"'
+            for i in range(MIN_ROWS)
+        )
+        rows = load(_write(tmp_path, f"{header}\n{body}"))
+        assert len(rows) == MIN_ROWS
+        assert rows[0].position == "RB"
+        assert rows[0].team == "DET"
+        assert rows[0].projected_points == 276.7
+
+    def test_position_rank_only_supplies_the_position(self, tmp_path):
+        header = "player,position-rank,fpts"
+        body = "\n".join(f"Player{i},WR-{i + 1:02d},{200 - i}" for i in range(MIN_ROWS))
+        rows = load(_write(tmp_path, f"{header}\n{body}"))
+        assert {row.position for row in rows} == {"WR"}
+
+    def test_a_plain_position_column_wins_over_the_rank(self, tmp_path):
+        header = "player,pos,position-rank,fpts"
+        body = "\n".join(f"Player{i},TE,WR-{i + 1:02d},{200 - i}" for i in range(MIN_ROWS))
+        rows = load(_write(tmp_path, f"{header}\n{body}"))
+        assert {row.position for row in rows} == {"TE"}
+
     def test_points_only_file_is_accepted(self, tmp_path):
         header = "player,pos,fpts"
         body = "\n".join(f"Player{i},RB,{300 - i}" for i in range(MIN_ROWS))

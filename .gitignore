@@ -11,3 +11,7 @@ build/
 # Local runtime state (tokens, ranking cache, generated certs)
 .ff-helper/
 *.pem
+
+# Projection and keeper CSVs. Exports from a paid subscription are not ours to
+# redistribute, and this repo is public.
+*.csv

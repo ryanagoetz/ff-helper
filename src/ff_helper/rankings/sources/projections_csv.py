@@ -37,7 +37,22 @@ MIN_ROWS = 20
 _PLAYER_COLUMNS = ("player", "name", "player_name", "full_name")
 _POSITION_COLUMNS = ("pos", "position", "player_position")
 _TEAM_COLUMNS = ("team", "tm", "nfl_team", "player_team")
-_POINTS_COLUMNS = ("fpts", "points", "proj_points", "projected_points", "fantasy_points")
+_POINTS_COLUMNS = (
+    "fpts",
+    "points",
+    "proj_points",
+    "projected_points",
+    "fantasy_points",
+    # 4for4 spells the total this way on its rankings export.
+    "ff_pts",
+    "ffpts",
+    "fpts_proj",
+    "proj_fpts",
+)
+
+# Some exports carry no plain position column, only a combined positional rank such as
+# 4for4's "Position-Rank" holding "RB-01". The prefix is the position.
+_POSITION_RANK_COLUMNS = ("position_rank", "pos_rank", "positional_rank", "pos_rk")
 
 # Maps onto PROJECTION_STAT_IDS in yahoo/models.py -- those keys are what the scoring
 # engine reads, so anything not spelled that way here is simply never scored.
@@ -80,6 +95,18 @@ def _column(row: dict[str, str], candidates: tuple[str, ...]) -> str | None:
                 return cleaned
             found = ""
     return found
+
+
+def _position_from_rank(raw: str | None) -> str:
+    """Pull "RB" out of a combined positional rank like "RB-01".
+
+    Returning "" rather than guessing is safe: Yahoo is the canonical registry, so the
+    crosswalk supplies the real position. This only sharpens the match.
+    """
+    if not raw:
+        return ""
+    head = raw.strip().replace("_", "-").split("-", 1)[0].strip()
+    return head if head.isalpha() else ""
 
 
 def _to_float(raw: str | None) -> float | None:
@@ -165,10 +192,14 @@ def load(path: Path, *, source: str = SOURCE) -> list[SourceRow]:
                 problems.append(f"line {line_number} ({name}): no stats and no points")
                 continue
 
+            position = _column(row, _POSITION_COLUMNS)
+            if not position:
+                position = _position_from_rank(_column(row, _POSITION_RANK_COLUMNS))
+
             rows.append(
                 SourceRow(
                     name=name,
-                    position=normalize_position(_column(row, _POSITION_COLUMNS) or ""),
+                    position=normalize_position(position or ""),
                     team=normalize_team(_column(row, _TEAM_COLUMNS) or ""),
                     source=source,
                     projected_points=points,
