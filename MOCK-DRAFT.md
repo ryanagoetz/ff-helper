@@ -84,6 +84,22 @@ If you get `address already in use`, it is **already running** from earlier — 
 http://127.0.0.1:8777 in a browser. Note the page is served from disk, so a plain refresh
 picks up any changes without restarting anything.
 
+### Practise the nomination lookup
+
+The top panel, **"Player nominated — what is he worth?"**, is the one you will use most in
+an auction. Type a few letters of the name someone just called and it shows what he is
+worth to you and the most you should pay. It records nothing, so use it freely on players
+you have no intention of buying.
+
+Two labels under the second number, and the difference matters in the room:
+
+- **bid up to** — that is what he is worth. Stop there because the value stops.
+- **capped by your budget** — he is worth more, but you cannot pay it and still fill a
+  roster. Stop there because the money stops.
+
+Try one cheap player and one expensive one after you have spent most of your budget, so
+you have seen both.
+
 ### Practise typing sales — the keyboard flow
 
 Drill this whatever happens with Job A. If pasting works you will still type corrections;

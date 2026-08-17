@@ -199,6 +199,24 @@ def create_app(
             ]
         }
 
+    @app.get("/api/lookup")
+    def lookup(q: str, limit: int = 5) -> dict:
+        """What is a named player worth right now — for a nomination, not a pick.
+
+        Separate from /api/search, which exists to *record* a sale and so returns only
+        enough to identify a player. This answers the auction question instead: worth,
+        ceiling, and whether you can afford him at all.
+        """
+        picks = assistant.evaluate(q, limit=limit)
+        payload = {
+            "draft_type": "auction" if assistant.is_auction else "snake",
+            "results": [_serialize(pick, assistant.is_auction) for pick in picks],
+        }
+        if assistant.is_auction:
+            payload["max_bid"] = assistant.state.my_max_bid()
+            payload["inflation"] = round(assistant.current_inflation(), 3)
+        return payload
+
     @app.post("/api/pick")
     def manual_pick(body: ManualPick) -> dict:
         """Mark a player drafted by hand, for when the Yahoo feed stalls."""

@@ -471,3 +471,59 @@ class TestBridgeTokenGate:
             "/api/board/paste", json=self._body(), headers={"Origin": self.YAHOO}
         )
         assert res.status_code == 401
+
+
+class TestNominationLookup:
+    """The question an auction actually asks: someone said a name, what is he worth?"""
+
+    def _client(self, assistant):
+        from fastapi.testclient import TestClient
+
+        from ff_helper.web.app import create_app
+
+        return TestClient(create_app(assistant, None))
+
+    def test_a_partial_name_returns_a_value(self, assistant):
+        res = self._client(assistant).get("/api/lookup?q=RB Player0").json()
+        assert res["draft_type"] == "auction"
+        assert res["results"], "expected a match"
+        assert res["results"][0]["value"] > 0
+        assert "max_bid" in res
+
+    def test_it_records_nothing(self, assistant):
+        """You look up players you have no intention of bidding on."""
+        client = self._client(assistant)
+        before = client.get("/api/state").json()["auction"]["league_money_remaining"]
+        client.get("/api/lookup?q=RB Player0")
+        after = client.get("/api/state").json()["auction"]["league_money_remaining"]
+        assert before == after
+
+    def test_drafted_players_are_not_offered(self, assistant):
+        client = self._client(assistant)
+        name = assistant.registry.players[0].full_name
+        assistant.state.apply_bridge(
+            [BridgeSale(player_key=assistant.registry.players[0].player_key,
+                        team_key=RIVAL, cost=5)],
+            timestamp=1.0,
+        )
+        hits = client.get(f"/api/lookup?q={name}").json()["results"]
+        assert all(hit["name"] != name for hit in hits)
+
+    def test_the_ceiling_never_exceeds_what_you_can_pay(self, assistant):
+        """Bidding past it means you cannot fill a legal roster afterwards."""
+        client = self._client(assistant)
+        res = client.get("/api/lookup?q=Player&limit=8").json()
+        for hit in res["results"]:
+            assert hit["bid_to"] <= res["max_bid"]
+
+    def test_an_empty_query_is_not_an_error(self, assistant):
+        res = self._client(assistant).get("/api/lookup?q=").json()
+        assert res["results"] == []
+
+    def test_the_value_matches_the_board(self, assistant):
+        """Two prices for one player five seconds apart is worse than no price."""
+        client = self._client(assistant)
+        board = client.get("/api/recommend?limit=1").json()["recommendations"][0]
+        looked_up = client.get(f"/api/lookup?q={board['name']}").json()["results"][0]
+        assert looked_up["value"] == board["value"]
+        assert looked_up["bid_to"] == board["bid_to"]

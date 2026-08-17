@@ -103,6 +103,12 @@
 <div id="alerts"></div>
 <div class="muted" id="notes" style="margin-bottom:14px"></div>
 
+<div class="panel" id="nominationPanel" style="margin-bottom:14px; border-color:var(--accent-dim)">
+  <div class="label" style="margin-bottom:8px">Player nominated — what is he worth?</div>
+  <input type="search" id="nomBox" placeholder="Type a few letters…" autocomplete="off">
+  <div id="nomResult" style="margin-top:10px"></div>
+</div>
+
 <div class="grid">
   <div>
     <div class="panel top" id="topCard">
@@ -540,6 +546,72 @@ $("searchResults").addEventListener("click", e => {
   if (!row) return;
   highlighted = parseInt(row.dataset.index, 10) || 0;
   if (chooseHighlighted() && !isAuction) submitPick();
+});
+
+// -- nomination lookup -----------------------------------------------------------------
+// The question an auction actually asks, with a clock running: someone said a name, what
+// is he worth and when do I stop. Deliberately read-only -- it records nothing, so it can
+// be used freely on players you have no intention of bidding for.
+let nomTimer = null;
+
+function renderNomination(data) {
+  const box = $("nomResult");
+  if (!data.results.length) {
+    box.innerHTML = $("nomBox").value.trim()
+      ? `<div class="muted">No undrafted player matches that.</div>` : "";
+    return;
+  }
+
+  const top = data.results[0];
+  const rest = data.results.slice(1);
+  const auction = data.draft_type === "auction";
+
+  // The engine already caps bid_to at what you can pay, so the ceiling is just that.
+  // What the label has to say is *why* it is low: comparing it against worth is the only
+  // way to tell "he is not worth more" from "you cannot afford more", and those call for
+  // opposite behaviour in the room.
+  const ceiling = auction ? top.bid_to : null;
+  const capped = auction && top.value > data.max_bid;
+
+  const headline = auction
+    ? `<div class="stats" style="margin-top:4px">
+         <div class="stat"><b>$${top.value.toFixed(0)}</b><span>worth to you</span></div>
+         <div class="stat"><b${capped ? ' style="color:var(--warn)"' : ""}>$${ceiling}</b>
+           <span>${capped ? "capped by your budget" : "bid up to"}</span></div>
+         ${top.market !== null && top.market !== undefined
+            ? `<div class="stat"><b>$${top.market.toFixed(0)}</b><span>room pays</span></div>` : ""}
+         <div class="stat"><b>$${data.max_bid}</b><span>your max bid</span></div>
+       </div>`
+    : `<div class="stats" style="margin-top:4px">
+         <div class="stat"><b>${top.vor.toFixed(0)}</b><span>VOR</span></div>
+         <div class="stat"><b>${top.vona.toFixed(0)}</b><span>VONA</span></div>
+         <div class="stat"><b>${top.adp}</b><span>ADP</span></div>
+       </div>`;
+
+  box.innerHTML = `
+    <div style="font-size:22px; font-weight:700">${top.name} ${posTag(top.position)}</div>
+    <div class="muted">${top.team}${top.bye ? " · bye " + top.bye : ""}${
+      top.tier ? " · tier " + top.tier : ""}${top.estimated ? " · projection estimated" : ""}</div>
+    ${headline}
+    <div class="why" style="margin-top:8px">${top.reason}</div>
+    ${rest.length ? `<div class="muted" style="margin-top:8px">also: ` + rest.map(r =>
+        `${r.name} ${auction ? "$" + r.value.toFixed(0) : r.vor.toFixed(0)}`).join(" · ")
+      + `</div>` : ""}`;
+}
+
+$("nomBox").addEventListener("input", e => {
+  clearTimeout(nomTimer);
+  const q = e.target.value.trim();
+  if (!q) { $("nomResult").innerHTML = ""; return; }
+  nomTimer = setTimeout(async () => {
+    try {
+      renderNomination(await getJSON(`/api/lookup?q=${encodeURIComponent(q)}`));
+    } catch (err) { /* transient; the next keystroke retries */ }
+  }, 120);
+});
+
+$("nomBox").addEventListener("keydown", e => {
+  if (e.key === "Escape") { e.target.value = ""; $("nomResult").innerHTML = ""; }
 });
 
 function sayPaste(text, kind) {

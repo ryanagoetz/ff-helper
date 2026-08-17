@@ -250,6 +250,38 @@ class Assistant:
         matches.sort(key=lambda v: v.adp)
         return matches[:limit]
 
+    def evaluate(self, query: str, limit: int = 5) -> list:
+        """Value specific players by name, for when one is nominated.
+
+        In an auction the question that actually gets asked is never "who is best" -- the
+        board answers that already. It is "someone just said Kenneth Walker, what is he
+        worth to me and when do I stop", and it gets asked with a clock running.
+
+        The numbers have to be the *same* ones the recommendations use, which is why this
+        scores the whole pool and then filters rather than valuing the player alone.
+        Inflation is a property of the room, not of a player: it comes from the money and
+        the talent still left, so a figure computed for one player in isolation would drift
+        from the board on the same screen. Two prices for one player, five seconds apart,
+        is worse than no price.
+        """
+        needle = query.strip().lower()
+        if not needle:
+            return []
+
+        with self.lock:
+            available = self.available()
+        wanted = {v.player_key for v in available if needle in v.name.lower()}
+        if not wanted:
+            return []
+
+        # Score everything, keep the matches. Cheap next to being wrong.
+        ranked = (
+            self.auction_recommendations(limit=len(available))
+            if self.is_auction
+            else self.snake_recommendations(limit=len(available))
+        )
+        return [pick for pick in ranked if pick.valuation.player_key in wanted][:limit]
+
     def snapshot_state(self) -> dict:
         """A JSON-ready view of the board for the UI."""
         with self.lock:
