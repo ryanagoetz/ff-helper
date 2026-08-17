@@ -257,6 +257,22 @@ record — but you get told, rather than the board quietly rewriting itself unde
 
 ## Check it before you trust it
 
+### Start here: the preflight check
+
+```bash
+python scripts/doctor.py --all
+```
+
+Run this **first**, before the snapshot or anything else. It verifies sign-in, reads every
+league, and reports the handful of things that can only be confirmed against real data:
+whether Yahoo publishes your auction budget, whether keeper salaries come through, whether
+pre-draft rosters are populated, and whether ADP and `average_cost` are actually there.
+
+It ends with a numbered list of what to fix, and exits non-zero if anything needs
+attention. Everything else in this section assumes it came back clean.
+
+### Then backtest the model
+
 ```bash
 python scripts/replay.py
 ```
@@ -266,12 +282,19 @@ at each of your turns. Point it at your league's prior season with `--league <ke
 becomes a real backtest rather than a smoke test. If it keeps wanting players who actually
 went 40 picks later, the survival model is miscalibrated — better to learn that in August.
 
-**Then run a Yahoo mock draft with the app live.** That's the one test that matters: it
-exercises polling latency, the recommendation loop, and the UI under a real clock. Worth
-doing twice, and worth doing more than a day out.
+### Then run a live mock draft
+
+**This is the one test that matters.** Join a Yahoo mock draft and run the app against it —
+it exercises polling latency, the recommendation loop, and the UI under a real clock, none
+of which any offline test can reach. Worth doing twice, and worth doing more than a day out.
+
+The single thing to watch: **does the sync indicator stay green as picks land?** Yahoo's
+`draftresults` endpoint is polled, not pushed, and how promptly it reflects a live draft is
+the one assumption in this app that was never verifiable offline. If it lags, the manual
+override is already there — but you want to discover that in a mock, not in your draft.
 
 ```bash
-uv run pytest        # 202 tests, no network required
+uv run pytest        # 212 tests, no network required
 uv run ruff check .
 ```
 
