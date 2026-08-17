@@ -169,9 +169,16 @@ You do not need to fix those: a buyer the app has never seen claims a free slot 
 appears, so the money still leaves the room. Only `Your Team` is pinned, and Yahoo always
 labels your own team that way.
 
-### 2. Join a mock auction and reload the tab
+### 2. Join a mock auction, then refresh the tab (F5)
 
-The script runs on page load. Once a few players sell, a badge appears bottom-right:
+Tampermonkey injects the script when a page *loads*, so a draft room that was already open
+before you saved the script has not got it. A plain refresh fixes that.
+
+**On draft day, open the draft room after the script is installed**, so you never need to
+refresh mid-auction — a refresh costs a few seconds of not seeing the nomination, which is
+the wrong moment for it.
+
+Once a few players sell, a badge appears bottom-right:
 
 ```
 ff-helper: 16 read, 16 new · 14:32
@@ -193,6 +200,7 @@ that it was read correctly.
 | green, counts rising | working |
 | `no sales on screen yet` | nothing sold yet, or the results panel is not on screen |
 | `cannot reach ff-helper` | app not running, or started without `--bridge` |
+| no badge at all | the script did not load — refresh the tab (F5) |
 | amber, `n skipped` | some sales matched no player; the rest went in. Check the console. |
 | `REFUSED` | something the reader will not guess at. The message says what. |
 
