@@ -142,14 +142,18 @@ disk.
 
 Three steps. No league to build, no team names to discover.
 
-### 0. Once, before the mock: put the token in the script
+### 0. Once, before the mock: paste the reader in
 
 ```bash
-uv run python -c "import sys;sys.path.insert(0,'src');from ff_helper.config import bridge_token;print(bridge_token())"
+uv run python scripts/make_reader.py
 ```
 
-Set `TOKEN` in the Tampermonkey script to that. It never changes, so this is a one-time
-step. Leave `PORT` at 8777.
+That writes `scripts/yahoo_bridge.ready.js` with your token and port already filled in.
+Open it, select all, and paste it over whatever is currently in your Tampermonkey script
+(Tampermonkey icon → Dashboard → the ff-helper script → select all → paste → Ctrl+S).
+
+Nothing in it needs editing. The token does not change, so this is a one-time step —
+redo it only if you move ff-helper to a different port.
 
 ### 1. Start the app on the throwaway mock league
 

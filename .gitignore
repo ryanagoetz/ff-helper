@@ -19,3 +19,6 @@ build/
 # ...but keep the data/ directory itself, and its README.
 !data/.gitkeep
 !data/README.md
+
+# Generated reader scripts contain the bridge token.
+*.ready.js
