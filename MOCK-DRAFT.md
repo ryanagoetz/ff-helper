@@ -220,6 +220,17 @@ uv run ff-helper --offline data/league-bustamove.yaml --bridge
 
 Nothing was written to disk.
 
+One more habit worth building while you are here: after **any** completed draft you can
+see on Yahoo (a mock, a friend's league, last season), capture it —
+
+```bash
+uv run python scripts/replay.py --league <key> --dump data/drafts/<name>.json
+```
+
+Each record feeds `scripts/backtest.py` (calibration + counterfactual, fully offline),
+and the collection is what turns model tuning from guessing into measurement. See
+"Check it before you trust it" in the README.
+
 > `scripts/mock_config.py` still exists for building a league with the room's real team
 > names, which makes the roster panel readable. It is optional now, not a prerequisite.
 

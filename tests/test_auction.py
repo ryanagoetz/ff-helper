@@ -699,7 +699,9 @@ class TestAuctionAPI:
         assert payload["draft_type"] == "auction"
         assert "inflation" in payload
         first = payload["recommendations"][0]
-        assert {"value", "par", "market", "surplus", "bid_to", "affordable"} <= set(first)
+        assert {"value", "par", "market", "surplus", "bid_to", "plan_bid", "affordable"} <= set(
+            first
+        )
         # VONA and survival are meaningless in an auction and must not be served.
         assert "vona" not in first
         assert "survival" not in first

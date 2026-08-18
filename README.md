@@ -165,6 +165,12 @@ FF_AUCTION_BUDGET=
 # OAuth scope requested at sign-in. Leave blank: Yahoo grants fantasy access to an
 # approved app, and asking for a scope the app lacks fails with invalid_scope.
 FF_OAUTH_SCOPE=
+
+# Snake drafts: Monte Carlo rollouts per recommendation refresh. Leave blank/0 for the
+# analytic survival model (the default). Turn on (300 is sensible) only after
+# scripts/backtest.py shows it beating the analytic model on YOUR league's records --
+# see "Check it before you trust it" below.
+FF_MC_ROLLOUTS=
 ```
 
 ### 4. Sign in
@@ -411,6 +417,56 @@ at each of your turns. Point it at your league's prior season with `--league <ke
 becomes a real backtest rather than a smoke test. If it keeps wanting players who actually
 went 40 picks later, the survival model is miscalibrated — better to learn that in August.
 
+Get in the habit of capturing every completed draft you can see — each record makes the
+next tuning decision less of a guess, and anonymized records are committable:
+
+```bash
+uv run python scripts/replay.py --dump data/drafts/2025-league.json
+```
+
+`--dump` writes the whole draft (league, teams, picks) to a file that replays **fully
+offline** from then on (`--from-file`, no Yahoo sign-in needed). Team and league names are
+scrubbed unless you pass `--keep-names`.
+
+The deeper report comes from the backtest harness:
+
+```bash
+uv run python scripts/backtest.py --file data/drafts/2025-league.json --time
+```
+
+It scores the engine three ways, in increasing order of importance:
+
+1. **Hits** — was your actual pick on the engine's short list? Color, not a metric;
+   disagreement is often the engine being right.
+2. **Calibration** — every survival probability the engine would have quoted, scored
+   against what actually happened. The Brier score summarizes (0.25 = coin-flipping;
+   lower is better) and the reliability table shows *where* it is wrong: of the players
+   given ~70% survival, did about 70% survive?
+3. **Counterfactual** — the roster the engine would have drafted versus the one you
+   actually drafted versus naive best-VOR, compared on **best-legal-lineup points**, the
+   number that decides games.
+
+This is the tuning loop: change a model constant, re-run the backtest on your records,
+keep the change only if Brier or the counterfactual improves. Every engine change in this
+repo's history was gated on exactly that.
+
+**The Monte Carlo simulator** (`FF_MC_ROLLOUTS`) is the one model that ships off by
+default. Instead of composing survival formulas, it plays the next stretch of the draft
+out a few hundred times — sampling each opponent pick by ADP hazard and that team's
+actual roster needs — which prices in the correlations the analytic model assumes away
+(whether the third receiver survives depends on whether the first two did). Score it
+against the analytic model on your own records:
+
+```bash
+uv run python scripts/backtest.py --file data/drafts/2025-league.json --predictor mc
+FF_MC_ROLLOUTS=300 uv run python scripts/backtest.py --file data/drafts/2025-league.json --time
+```
+
+Set `FF_MC_ROLLOUTS=300` in `.env` for draft day only if it beats the analytic Brier and
+counterfactual on your records with acceptable latency (`--time`; ~170ms per refresh at
+300 rollouts, versus ~20ms analytic). On synthetic near-ADP rooms the two tie — the
+simulator's edge, if any, comes from real rooms with real correlation.
+
 ### Then run a live mock draft
 
 **This is the one test that matters.** Join a Yahoo mock draft and run the app against it —
@@ -423,7 +479,7 @@ the one assumption in this app that was never verifiable offline. If it lags, th
 override is already there — but you want to discover that in a mock, not in your draft.
 
 ```bash
-uv run pytest        # 212 tests, no network required
+uv run pytest        # the full suite, no network required
 uv run ruff check .
 ```
 

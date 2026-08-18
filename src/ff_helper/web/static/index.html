@@ -329,7 +329,7 @@ const SNAKE_COLUMNS = `<tr>
 
 const AUCTION_COLUMNS = `<tr>
   <th>Player</th><th>Pos</th><th class="num">Worth</th><th class="num">Market</th>
-  <th class="num">Edge</th><th class="num">Bid to</th><th>Why</th></tr>`;
+  <th class="num">Edge</th><th class="num">Plan</th><th class="num">Bid to</th><th>Why</th></tr>`;
 
 function renderRecommendations(data) {
   const list = data.recommendations || [];
@@ -376,6 +376,7 @@ function renderRecommendations(data) {
       <td class="num">$${r.value}</td>
       <td class="num">${money(r.market)}</td>
       <td class="num">${r.surplus === null ? "—" : (r.surplus > 0 ? "+" : "") + r.surplus}</td>
+      <td class="num">${r.plan_bid === null || r.plan_bid === undefined ? "—" : "$" + r.plan_bid}</td>
       <td class="num">$${r.bid_to}</td>
       <td class="why">${r.reason}</td>
     </tr>` : `
