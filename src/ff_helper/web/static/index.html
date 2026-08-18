@@ -103,10 +103,29 @@
 <div id="alerts"></div>
 <div class="muted" id="notes" style="margin-bottom:14px"></div>
 
+<!-- One box for the whole nomination: look him up, then record the sale on the same
+     entry. Typing the name twice -- once to see the value, once to record it -- was the
+     single most repeated action of a draft, ~180 times, under a clock. -->
 <div class="panel" id="nominationPanel" style="margin-bottom:14px; border-color:var(--accent-dim)">
-  <div class="label" style="margin-bottom:8px">Player nominated — what is he worth?</div>
+  <div class="label" style="margin-bottom:8px">Nominated player</div>
   <input type="search" id="nomBox" placeholder="Type a few letters…" autocomplete="off">
+  <div class="results" id="nomMatches"></div>
   <div id="nomResult" style="margin-top:10px"></div>
+  <div id="saleEntry" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--line)">
+    <div class="label" style="margin-bottom:6px">Sold for</div>
+    <div class="row">
+      <input type="number" id="soldPrice" min="1" placeholder="$ price" style="width:100px; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); color:var(--text)">
+      <select id="soldTeam" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); color:var(--text)"></select>
+      <button id="recordBtn">Record</button>
+    </div>
+    <div class="muted" style="margin-top:6px">
+      <b>Enter</b> moves price → buyer → record. <b>Esc</b> starts over.
+    </div>
+  </div>
+  <div id="entryMessage" style="display:none; margin-top:8px; padding:8px 10px; border-radius:8px; font-size:13px"></div>
+  <div class="row" style="margin-top:10px">
+    <button id="undoBtn">Undo last pick</button>
+  </div>
 </div>
 
 <div class="grid">
@@ -129,26 +148,6 @@
   </div>
 
   <div>
-    <div class="panel">
-      <div class="label" style="margin-bottom:8px">Mark a player drafted</div>
-      <input type="search" id="search" placeholder="Name, then Enter…" autocomplete="off">
-      <div id="auctionEntry" style="display:none; margin-top:8px">
-        <div class="row">
-          <input type="number" id="soldPrice" min="1" placeholder="$ price" style="width:90px; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); color:var(--text)">
-          <select id="soldTeam" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); color:var(--text)"></select>
-        </div>
-        <div class="muted" style="margin-top:6px">
-          Type a name, <b>Enter</b> to pick, price, <b>Enter</b>, buyer, <b>Enter</b> to record.
-          Arrow keys move through matches; Esc clears.
-        </div>
-      </div>
-      <div id="entryMessage" style="display:none; margin-top:8px; padding:8px 10px; border-radius:8px; font-size:13px"></div>
-      <div class="results" id="searchResults"></div>
-      <div class="row" style="margin-top:10px">
-        <button id="undoBtn">Undo last manual pick</button>
-      </div>
-    </div>
-
     <div class="panel">
       <div class="label" style="margin-bottom:8px">Paste the draft room</div>
       <div class="muted" style="margin-bottom:8px">
@@ -182,6 +181,7 @@ const $ = id => document.getElementById(id);
 const fmt = n => (n === null || n === undefined) ? "—" : n;
 const money = n => (n === null || n === undefined) ? "—" : `$${n}`;
 let isAuction = false;
+let lastMaxBid = 0;
 
 async function getJSON(url, opts) {
   const res = await fetch(url, opts);
@@ -285,11 +285,12 @@ function renderState(s) {
 }
 
 function renderAuctionBar(s) {
-  const bar = $("auctionBar"), entry = $("auctionEntry");
-  if (!isAuction || !s.auction) { bar.style.display = "none"; entry.style.display = "none"; return; }
-  bar.style.display = ""; entry.style.display = "";
+  const bar = $("auctionBar");
+  if (!isAuction || !s.auction) { bar.style.display = "none"; return; }
+  bar.style.display = "";
 
   const a = s.auction;
+  lastMaxBid = a.max_bid;
   $("auctionStats").innerHTML = `
     <div class="stat"><b>$${a.remaining}</b><span>Budget left</span></div>
     <div class="stat"><b>$${a.max_bid}</b><span>Max bid</span></div>
@@ -401,14 +402,15 @@ async function refresh() {
     $("syncText").textContent = "app unreachable";
   }
 }
-
-// -- manual override -------------------------------------------------------------
-// Offline there is no feed, so this is not a fallback for a stalled poller -- it is the
-// only way picks reach the board, roughly 180 times in a 12-team auction. So it is built
-// for the keyboard: name, Enter, price, Enter, buyer, Enter. Nothing here needs a mouse,
-// and nothing fails quietly.
-let searchTimer = null;
-let searchSeq = 0;
+// -- the nomination: look him up and record the sale from one box ----------------------
+// A nomination is one event, so it is one entry. Typing the name to see the value and
+// then typing it again to record the result was the most repeated action of a draft --
+// roughly 180 times, with a clock running and someone shouting numbers.
+let nomTimer = null;
+// Monotonic id: only the newest request may paint. clearTimeout cancels a *scheduled*
+// request, not an in-flight one, so without this a slow earlier response overwrites a
+// newer one and you read the wrong player's ceiling.
+let nomSeq = 0;
 let matches = [];
 let highlighted = 0;
 let chosen = null;
@@ -427,33 +429,58 @@ function say(text, kind) {
 }
 
 function drawMatches() {
-  const box = $("searchResults");
-  if (!matches.length) {
-    // "No undrafted match" is only true when a search found nothing. Once a player is
-    // chosen the list is empty because we emptied it, and saying it then reads as
-    // though the pick failed.
-    const searching = $("search").value.trim() && !chosen;
-    box.innerHTML = searching ? `<div class="muted">No undrafted match.</div>` : "";
+  const box = $("nomMatches");
+  if (chosen || !matches.length) {
+    // "No match" is only true when a search found nothing. After a pick the list is
+    // empty because we emptied it, and saying it then reads as though the pick failed.
+    box.innerHTML = (!chosen && $("nomBox").value.trim())
+      ? `<div class="muted">No undrafted player matches that.</div>` : "";
     return;
   }
-  box.innerHTML = matches.map((r, index) =>
-    `<div data-key="${r.player_key}" data-index="${index}"${
-      index === highlighted ? ' style="background:var(--panel-2); outline:1px solid var(--line)"' : ""
-    }>
-       <span>${r.name} ${posTag(r.position)}</span>
-       <span class="muted">ADP ${r.adp}</span>
+  // Worth is shown on every row, so the value is visible before you commit to anyone.
+  box.innerHTML = matches.map((m, index) =>
+    `<div data-index="${index}"${index === highlighted
+      ? ' style="background:var(--panel-2); outline:1px solid var(--line)"' : ""}>
+       <span>${m.name} ${posTag(m.position)}</span>
+       <span class="muted">${isAuction ? "$" + m.value.toFixed(0) : "VOR " + m.vor.toFixed(0)}</span>
      </div>`).join("");
+}
+
+function renderChosen(pick, maxBid) {
+  // The ceiling is labelled by *why* it is low. "bid up to" means the value stops there;
+  // "capped by your budget" means he is worth more and you cannot pay it. Those call for
+  // opposite behaviour in the room, and the number alone cannot tell them apart.
+  const capped = isAuction && pick.value > maxBid;
+  const stats = isAuction
+    ? `<div class="stat"><b>$${pick.value.toFixed(0)}</b><span>worth to you</span></div>
+       <div class="stat"><b${capped ? ' style="color:var(--warn)"' : ""}>$${pick.bid_to}</b>
+         <span>${capped ? "capped by your budget" : "bid up to"}</span></div>
+       ${pick.market !== null && pick.market !== undefined
+          ? `<div class="stat"><b>$${pick.market.toFixed(0)}</b><span>room pays</span></div>` : ""}
+       <div class="stat"><b>$${maxBid}</b><span>your max bid</span></div>`
+    : `<div class="stat"><b>${pick.vor.toFixed(0)}</b><span>VOR</span></div>
+       <div class="stat"><b>${pick.vona.toFixed(0)}</b><span>VONA</span></div>
+       <div class="stat"><b>${pick.adp}</b><span>ADP</span></div>`;
+
+  $("nomResult").innerHTML = `
+    <div style="font-size:22px; font-weight:700">${pick.name} ${posTag(pick.position)}</div>
+    <div class="muted">${pick.team}${pick.bye ? " · bye " + pick.bye : ""}${
+      pick.tier ? " · tier " + pick.tier : ""}${pick.estimated ? " · projection estimated" : ""}</div>
+    <div class="stats" style="margin-top:4px">${stats}</div>
+    <div class="why" style="margin-top:8px">${pick.reason}</div>`;
 }
 
 function chooseHighlighted() {
   const match = matches[highlighted];
   if (!match) return false;
   chosen = match;
-  $("search").value = match.name;
+  $("nomBox").value = match.name;
   matches = [];
   drawMatches();
+  renderChosen(match, lastMaxBid);
   if (isAuction) {
-    say(`${match.name} — enter the price it sold for, then the buyer.`, "hint");
+    say(`${match.name} — enter what he sold for, then the buyer.`, "hint");
+    $("saleEntry").style.display = "";
     $("soldPrice").focus();
   }
   return true;
@@ -461,13 +488,17 @@ function chooseHighlighted() {
 
 function resetEntry() {
   chosen = null; matches = []; highlighted = 0;
-  $("search").value = "";
-  if (isAuction) { $("soldPrice").value = ""; $("soldTeam").value = ""; }
+  $("nomBox").value = "";
+  $("nomResult").innerHTML = "";
+  if (isAuction) {
+    $("soldPrice").value = ""; $("soldTeam").value = "";
+    $("saleEntry").style.display = "none";
+  }
   drawMatches();
 }
 
 async function submitPick() {
-  if (!chosen) { say("Pick a player first — type a name and press Enter.", "error"); return; }
+  if (!chosen) { say("Look a player up first — type a name and press Enter.", "error"); return; }
 
   const body = { player_key: chosen.player_key };
   if (isAuction) {
@@ -497,130 +528,35 @@ async function submitPick() {
       body: JSON.stringify(body)
     });
   } catch (err) {
-    say(`Could not record ${label}. Nothing was changed — try again.`, "error");
+    say(`Could not record ${label}: ${err.message || err}`, "error");
     return;
   }
 
   resetEntry();
   say(`Recorded ${label}${detail}. Undo if that is wrong.`, "ok");
-  $("search").focus();
+  $("nomBox").focus();
   refresh();
-}
-
-$("search").addEventListener("input", e => {
-  clearTimeout(searchTimer);
-  chosen = null;
-  const q = e.target.value.trim();
-  if (!q) { matches = []; drawMatches(); return; }
-  const mine = ++searchSeq;
-  searchTimer = setTimeout(async () => {
-    const data = await getJSON(`/api/search?q=${encodeURIComponent(q)}`);
-    if (mine !== searchSeq) return;
-    matches = data.results || [];
-    highlighted = 0;
-    drawMatches();
-  }, 140);
-});
-
-$("search").addEventListener("keydown", e => {
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    if (!matches.length) return;
-    e.preventDefault();
-    highlighted = (highlighted + (e.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length;
-    drawMatches();
-  } else if (e.key === "Enter") {
-    e.preventDefault();
-    // A name already chosen plus Enter means "record it" -- so a snake pick is one
-    // keystroke, and an auction sale does not need the mouse to finish.
-    if (chosen) { submitPick(); return; }
-    if (!chooseHighlighted()) say("No undrafted player matches that name.", "error");
-    else if (!isAuction) submitPick();
-  } else if (e.key === "Escape") {
-    resetEntry(); say("", "hint");
-  }
-});
-
-$("soldPrice").addEventListener("keydown", e => {
-  if (e.key === "Enter") { e.preventDefault(); $("soldTeam").focus(); }
-  else if (e.key === "Escape") { resetEntry(); say("", "hint"); $("search").focus(); }
-});
-
-$("soldTeam").addEventListener("keydown", e => {
-  if (e.key === "Enter") { e.preventDefault(); submitPick(); }
-  else if (e.key === "Escape") { resetEntry(); say("", "hint"); $("search").focus(); }
-});
-
-$("searchResults").addEventListener("click", e => {
-  const row = e.target.closest("[data-key]");
-  if (!row) return;
-  highlighted = parseInt(row.dataset.index, 10) || 0;
-  if (chooseHighlighted() && !isAuction) submitPick();
-});
-
-// -- nomination lookup -----------------------------------------------------------------
-// The question an auction actually asks, with a clock running: someone said a name, what
-// is he worth and when do I stop. Deliberately read-only -- it records nothing, so it can
-// be used freely on players you have no intention of bidding for.
-let nomTimer = null;
-// Monotonic id: only the newest request may paint. clearTimeout cancels a *scheduled*
-// request, not an in-flight one, so without this a slow earlier response overwrites a
-// newer one and you read the wrong player's ceiling with a clock running.
-let nomSeq = 0;
-
-function renderNomination(data) {
-  const box = $("nomResult");
-  if (!data.results.length) {
-    box.innerHTML = $("nomBox").value.trim()
-      ? `<div class="muted">No undrafted player matches that.</div>` : "";
-    return;
-  }
-
-  const top = data.results[0];
-  const rest = data.results.slice(1);
-  const auction = data.draft_type === "auction";
-
-  // The engine already caps bid_to at what you can pay, so the ceiling is just that.
-  // What the label has to say is *why* it is low: comparing it against worth is the only
-  // way to tell "he is not worth more" from "you cannot afford more", and those call for
-  // opposite behaviour in the room.
-  const ceiling = auction ? top.bid_to : null;
-  const capped = auction && top.value > data.max_bid;
-
-  const headline = auction
-    ? `<div class="stats" style="margin-top:4px">
-         <div class="stat"><b>$${top.value.toFixed(0)}</b><span>worth to you</span></div>
-         <div class="stat"><b${capped ? ' style="color:var(--warn)"' : ""}>$${ceiling}</b>
-           <span>${capped ? "capped by your budget" : "bid up to"}</span></div>
-         ${top.market !== null && top.market !== undefined
-            ? `<div class="stat"><b>$${top.market.toFixed(0)}</b><span>room pays</span></div>` : ""}
-         <div class="stat"><b>$${data.max_bid}</b><span>your max bid</span></div>
-       </div>`
-    : `<div class="stats" style="margin-top:4px">
-         <div class="stat"><b>${top.vor.toFixed(0)}</b><span>VOR</span></div>
-         <div class="stat"><b>${top.vona.toFixed(0)}</b><span>VONA</span></div>
-         <div class="stat"><b>${top.adp}</b><span>ADP</span></div>
-       </div>`;
-
-  box.innerHTML = `
-    <div style="font-size:22px; font-weight:700">${top.name} ${posTag(top.position)}</div>
-    <div class="muted">${top.team}${top.bye ? " · bye " + top.bye : ""}${
-      top.tier ? " · tier " + top.tier : ""}${top.estimated ? " · projection estimated" : ""}</div>
-    ${headline}
-    <div class="why" style="margin-top:8px">${top.reason}</div>
-    ${rest.length ? `<div class="muted" style="margin-top:8px">also: ` + rest.map(r =>
-        `${r.name} ${auction ? "$" + r.value.toFixed(0) : r.vor.toFixed(0)}`).join(" · ")
-      + `</div>` : ""}`;
 }
 
 $("nomBox").addEventListener("input", e => {
   clearTimeout(nomTimer);
+  chosen = null;
+  if (isAuction) $("saleEntry").style.display = "none";
+  $("nomResult").innerHTML = "";
   const q = e.target.value.trim();
-  if (!q) { $("nomResult").innerHTML = ""; return; }
+  if (!q) { matches = []; drawMatches(); return; }
   const mine = ++nomSeq;
   nomTimer = setTimeout(async () => {
     try {
-      const data = await getJSON(`/api/lookup?q=${encodeURIComponent(q)}`);
-      if (mine === nomSeq) renderNomination(data);
+      const data = await getJSON(`/api/lookup?q=${encodeURIComponent(q)}&limit=6`);
+      if (mine !== nomSeq) return;
+      matches = data.results || [];
+      highlighted = 0;
+      if (data.max_bid !== undefined) lastMaxBid = data.max_bid;
+      drawMatches();
+      // Show the top match's value without waiting to be asked: the question is always
+      // "what is he worth", and one keystroke less is one keystroke less.
+      if (matches.length) renderChosen(matches[0], lastMaxBid);
     } catch (err) {
       // Never leave the previous player's numbers standing as though they answered this
       // query -- mid-auction that is read as a price.
@@ -633,7 +569,39 @@ $("nomBox").addEventListener("input", e => {
 });
 
 $("nomBox").addEventListener("keydown", e => {
-  if (e.key === "Escape") { e.target.value = ""; $("nomResult").innerHTML = ""; }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (!matches.length) return;
+    e.preventDefault();
+    highlighted = (highlighted + (e.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length;
+    drawMatches();
+    renderChosen(matches[highlighted], lastMaxBid);
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (chosen) { submitPick(); return; }
+    if (!chooseHighlighted()) say("No undrafted player matches that name.", "error");
+    else if (!isAuction) submitPick();
+  } else if (e.key === "Escape") {
+    resetEntry(); say("", "hint");
+  }
+});
+
+$("soldPrice").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); $("soldTeam").focus(); }
+  else if (e.key === "Escape") { resetEntry(); say("", "hint"); $("nomBox").focus(); }
+});
+
+$("soldTeam").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); submitPick(); }
+  else if (e.key === "Escape") { resetEntry(); say("", "hint"); $("nomBox").focus(); }
+});
+
+$("recordBtn").addEventListener("click", submitPick);
+
+$("nomMatches").addEventListener("click", e => {
+  const row = e.target.closest("[data-index]");
+  if (!row) return;
+  highlighted = parseInt(row.dataset.index, 10) || 0;
+  if (chooseHighlighted() && !isAuction) submitPick();
 });
 
 function sayPaste(text, kind) {

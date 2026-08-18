@@ -84,40 +84,30 @@ If you get `address already in use`, it is **already running** from earlier — 
 http://127.0.0.1:8777 in a browser. Note the page is served from disk, so a plain refresh
 picks up any changes without restarting anything.
 
-### Practise the nomination lookup
+### Practise the one-box flow
 
-The top panel, **"Player nominated — what is he worth?"**, is the one you will use most in
-an auction. Type a few letters of the name someone just called and it shows what he is
-worth to you and the most you should pay. It records nothing, so use it freely on players
-you have no intention of buying.
+Everything happens in the top panel, **Nominated player**. A nomination is one event, so
+it is one entry — the name is typed once:
 
-Two labels under the second number, and the difference matters in the room:
+```
+type a few letters  →  his value appears immediately
+Enter               →  price field opens
+price, Enter        →  buyer
+buyer, Enter        →  recorded, box clears, ready for the next
+```
+
+Arrow keys move through the matches and the value follows the highlight, so you can
+compare two players without committing. Esc abandons. Every match in the list shows its
+worth beside the name, so a glance is often enough without selecting anyone at all.
+
+Two labels under the second number, and the difference decides what you do:
 
 - **bid up to** — that is what he is worth. Stop there because the value stops.
 - **capped by your budget** — he is worth more, but you cannot pay it and still fill a
   roster. Stop there because the money stops.
 
-Try one cheap player and one expensive one after you have spent most of your budget, so
-you have seen both.
-
-### Practise typing sales — the keyboard flow
-
-Drill this whatever happens with Job A. If pasting works you will still type corrections;
-if it does not, this is the whole draft. Never touch the mouse:
-
-```
-type a name → Enter → type the price → Enter → choose the buyer → Enter
-```
-
-- **Arrow keys** move through the matching players.
-- **Esc** abandons a half-entered sale.
-- The buyer box starts blank on purpose and must be chosen every time. Defaulting to the
-  last buyer would be wrong more often than right, and a sale charged to the wrong team
-  corrupts that team's budget and every price the app quotes afterwards.
-
-Do fifteen or twenty. Watch **Money in room** and **Price level** move. The thing to build
-is the reflex, not the understanding — you want this taking ten seconds while you are
-listening to the next nomination.
+Do twenty. The thing to build is the reflex, not the understanding — you want this taking
+ten seconds while someone is calling numbers at you.
 
 ### See how the paste path behaves
 
