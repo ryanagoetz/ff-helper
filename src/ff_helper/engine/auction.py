@@ -45,6 +45,12 @@ MIN_BID = 1
 MIN_INFLATION = 0.25
 MAX_INFLATION = 3.0
 
+# Rungs of a position's price ladder, as offsets from the player the league's remaining
+# demand says I could realistically end up with (the k-th best left). Together with the
+# last man standing at $1 they are the *choices* a slot really has: pay up now, wait a
+# beat, punt a while, or punt entirely.
+_LADDER_OFFSETS = (0, 2, 5)
+
 
 @dataclass(frozen=True)
 class DollarValues:
@@ -258,6 +264,77 @@ def _estimate_markets(
     return estimates
 
 
+def _price_ladder(
+    pool: list[PlayerValuation],
+    demand_index: int,
+    expected_of: dict[str, float | None],
+    adjusted_of: dict[str, float],
+) -> list[tuple[int, float]]:
+    """The realistic ways to fund one slot at this position: (price, my value) rungs.
+
+    ``pool`` is the position's remaining players, best first by adjusted value;
+    ``demand_index`` points at the one the league's remaining demand leaves me (what
+    ``slot_price`` reserves). The rungs below it are progressively deeper punts, down to
+    the last man standing at $1. The point is not price precision but *choice*: a plan
+    can decide how deep to punt each position, which a single reserved price cannot say.
+    """
+    if not pool:
+        return []
+    indices = sorted(
+        {min(demand_index + offset, len(pool) - 1) for offset in _LADDER_OFFSETS}
+        | {len(pool) - 1}
+    )
+    ladder: list[tuple[int, float]] = []
+    for index in indices:
+        chosen = pool[index]
+        price = expected_of.get(chosen.player_key)
+        if price is None:
+            price = adjusted_of[chosen.player_key]
+        ladder.append((max(MIN_BID, round(price)), adjusted_of[chosen.player_key]))
+    return ladder
+
+
+def _plan_value(
+    options: list[list[tuple[int, float]]],
+    budget: int,
+    *,
+    released: int | None = None,
+    memo: dict[tuple, float] | None = None,
+) -> float:
+    """Best total value my remaining open slots can buy with ``budget`` dollars.
+
+    One entry of ``options`` per open starting slot: the (price, value) rungs that slot
+    could take (a flex merges every eligible position's ladder). ``released`` marks a
+    slot the candidate under consideration would fill himself, so the plan skips it.
+
+    A slot nothing fits still swallows the $1 minimum and contributes nothing. That
+    quiet zero is the actual marginal cost of overspending -- the thing the smart-cap
+    heuristic approximated -- and it is what makes "he is worth $40 but pay at most $28"
+    a computed statement instead of a rule of thumb.
+    """
+    if memo is None:
+        memo = {}
+
+    def solve(index: int, money: int) -> float:
+        if index >= len(options):
+            return 0.0
+        if index == released:
+            return solve(index + 1, money)
+        key = (released, index, money)
+        cached = memo.get(key)
+        if cached is None:
+            cached = solve(index + 1, max(0, money - MIN_BID))
+            for price, value in options[index]:
+                if price <= money:
+                    funded = value + solve(index + 1, money - price)
+                    if funded > cached:
+                        cached = funded
+            memo[key] = cached
+        return cached
+
+    return solve(0, max(0, int(budget)))
+
+
 @dataclass(frozen=True)
 class AuctionRecommendation:
     valuation: PlayerValuation
@@ -275,6 +352,11 @@ class AuctionRecommendation:
     # Softer ceiling than max_bid: what you can pay and still fill your remaining
     # *starter* slots at realistic prices, not $1 apiece.
     smart_cap: int
+    # The highest price at which buying him still beats spending the money on the rest
+    # of the plan (None when budget info is missing and no plan could be computed). Can
+    # exceed his raw worth: when his position cannot be punted, overpaying beats the
+    # alternative -- which is exactly what a per-player value can never express.
+    plan_bid: int | None = None
 
     @property
     def name(self) -> str:
@@ -286,9 +368,15 @@ class AuctionRecommendation:
 
     @property
     def bid_to(self) -> int:
-        """The most you should actually bid: your worth, capped by what you can pay while
-        still fielding a real lineup."""
-        return int(min(self.max_bid, self.smart_cap, round(self.value)))
+        """The most you should actually bid.
+
+        With a plan, the plan's break-even price governs, under the hard and smart
+        ceilings; without one, his raw worth stands in.
+        """
+        ceiling = min(self.max_bid, self.smart_cap)
+        if self.plan_bid is not None:
+            return int(min(ceiling, self.plan_bid))
+        return int(min(ceiling, round(self.value)))
 
 
 def recommend_auction(
@@ -403,6 +491,87 @@ def recommend_auction(
         spendable = my_budget_remaining - (total_reserved - released)
         return max(0, min(my_max_bid, int(spendable)))
 
+    # -- budget plan: what my remaining dollars can still buy, slot by slot ------------
+    # Scoring against the plan replaces the 0.6/0.4 surplus/worth blend whenever my own
+    # budget is known: a candidate is worth his value *plus what the plan can still fund
+    # after paying for him, minus what it could fund without him*. Fair-priced players
+    # already in the plan land near zero; bargains surface as the budget they free; a
+    # stud at a puntable position scores below the same stud at one that cannot wait.
+    plan_mode = my_budget_remaining is not None
+    plan_bid_of: dict[str, int] = {}
+    if plan_mode:
+        needs: list[frozenset[str]] = []
+        for position in sorted(open_dedicated):
+            needs.extend([frozenset({position})] * open_dedicated[position])
+        for eligible, count in open_flex:
+            needs.extend([eligible] * count)
+
+        ladder_of = {
+            position: _price_ladder(
+                pool,
+                max(1, levels.starters_drafted.get(position, 0) - league_counts.get(position, 0))
+                - 1,
+                expected_of,
+                adjusted_of,
+            )
+            for position, pool in by_position.items()
+        }
+        options = [
+            [rung for position in sorted(need) for rung in ladder_of.get(position, [])]
+            for need in needs
+        ]
+
+        plan_memo: dict[tuple, float] = {}
+        budget_base = max(0, my_budget_remaining - bench_open * MIN_BID)
+        base_plan = _plan_value(options, budget_base, memo=plan_memo)
+
+        # The slot each position's purchase would release: a dedicated slot when open
+        # (interchangeable, any one will do), else every eligible flex is tried and the
+        # kindest release kept, else None -- he lands on the bench and hands back its $1.
+        release_of: dict[str, list[int] | None] = {}
+        for position in by_position:
+            dedicated = [i for i, need in enumerate(needs) if need == frozenset({position})]
+            if dedicated:
+                release_of[position] = [dedicated[0]]
+            else:
+                flexes = [i for i, need in enumerate(needs) if position in need]
+                release_of[position] = flexes or None
+
+        after_cache: dict[tuple[str, int], float] = {}
+
+        def plan_after(position: str, price: int) -> float:
+            """Best fundable plan for everyone else, once he is bought at ``price``."""
+            key = (position, price)
+            cached = after_cache.get(key)
+            if cached is None:
+                spend = budget_base - price
+                releases = release_of.get(position)
+                if releases is None:
+                    credit = MIN_BID if bench_open > 0 else 0
+                    cached = _plan_value(options, spend + credit, memo=plan_memo)
+                else:
+                    cached = max(
+                        _plan_value(options, spend, released=index, memo=plan_memo)
+                        for index in releases
+                    )
+                after_cache[key] = cached
+            return cached
+
+        def plan_bid_for(position: str, adjusted: float) -> int:
+            """Largest price at which buying still beats the plan without him."""
+            if my_max_bid < MIN_BID:
+                return 0
+            if adjusted + plan_after(position, MIN_BID) - base_plan < 0:
+                return 0
+            low, high = MIN_BID, my_max_bid
+            while low < high:
+                mid = (low + high + 1) // 2
+                if adjusted + plan_after(position, mid) - base_plan >= 0:
+                    low = mid
+                else:
+                    high = mid - 1
+            return low
+
     recommendations: list[AuctionRecommendation] = []
     for valuation in available:
         key = valuation.player_key
@@ -421,13 +590,21 @@ def recommend_auction(
         expected_price = market if market is not None else adjusted
         affordable = expected_price <= my_max_bid
 
-        # Blend mispricing against raw worth. Chasing surplus alone builds a roster of
-        # cheap sleepers and no studs; chasing worth alone means overpaying at market.
-        score = penalized(0.6 * (surplus if surplus is not None else 0.0) + 0.4 * adjusted, need)
+        if plan_mode:
+            # His value plus the plan with him bought, against the plan without him.
+            price_paid = max(MIN_BID, round(expected_price))
+            marginal = adjusted + plan_after(valuation.position, price_paid) - base_plan
+            score = penalized(marginal, need)
+            plan_bid_of[key] = plan_bid_for(valuation.position, adjusted)
+        else:
+            # Degraded mode -- my own budget is unknown, so no plan can be priced. Blend
+            # mispricing against raw worth: chasing surplus alone builds a roster of
+            # cheap sleepers and no studs; chasing worth alone means overpaying.
+            score = penalized(
+                0.6 * (surplus if surplus is not None else 0.0) + 0.4 * adjusted, need
+            )
         if valuation.is_injured:
             score = penalized(score, 0.5)
-        if not affordable:
-            score -= 1000.0  # sorts below every attainable player without losing order
 
         smart_cap = smart_cap_for(valuation.position)
 
@@ -444,6 +621,7 @@ def recommend_auction(
                 score=score,
                 market_estimated=market_estimated,
                 smart_cap=smart_cap,
+                plan_bid=plan_bid_of.get(key),
                 reason=_explain(
                     valuation,
                     adjusted,
@@ -458,11 +636,14 @@ def recommend_auction(
                     expected_price,
                     market_estimated,
                     smart_cap,
+                    plan_bid_of.get(key),
                 ),
             )
         )
 
-    recommendations.sort(key=lambda r: -r.score)
+    # Unaffordable players sort below every attainable one whatever their score says --
+    # a tuple key, not a score offset, so no magic constant can ever be outscored.
+    recommendations.sort(key=lambda r: (not r.affordable, -r.score))
     return recommendations[:limit]
 
 
@@ -480,6 +661,7 @@ def _explain(
     expected_price: float,
     market_estimated: bool,
     smart_cap: int,
+    plan_bid: int | None = None,
 ) -> str:
     parts: list[str] = []
 
@@ -505,7 +687,17 @@ def _explain(
     elif inflation <= 0.85:
         parts.append(f"bargains available, prices at {inflation:.0%} of par")
 
-    if affordable and smart_cap < my_max_bid and smart_cap < round(adjusted):
+    if affordable and plan_bid is not None:
+        worth = round(adjusted)
+        if plan_bid <= 0:
+            parts.append("your plan spends every dollar better elsewhere")
+        elif plan_bid < worth:
+            parts.append(f"plan says stop at ${plan_bid}; the rest is spoken for")
+        elif worth < plan_bid < my_max_bid and round(expected_price) > worth:
+            # The room prices him above his worth, yet the plan still pays: his slot
+            # has no cheap fallback, and losing him costs more than the overage.
+            parts.append(f"worth stretching to ${plan_bid}; his slot has no cheap fallback")
+    elif affordable and smart_cap < my_max_bid and smart_cap < round(adjusted):
         parts.append(f"cap ${smart_cap} to keep real money for your open starters")
 
     if valuation.tier is not None:

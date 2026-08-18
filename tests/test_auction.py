@@ -21,6 +21,7 @@ from ff_helper.engine.auction import (
     MIN_BID,
     DollarValues,
     Sale,
+    _plan_value,
     compute_par_values,
     inflation_factor,
     recommend_auction,
@@ -558,6 +559,110 @@ class TestSmartCap:
         assert all(pick.smart_cap == pick.max_bid for pick in picks)
 
 
+class TestPlanScoring:
+    """The budget plan: score = his value + what the plan still funds after buying him.
+
+    The world: my starters lack a QB and an RB, $37 of plannable money. QBs fall off a
+    cliff after the top one; RBs stay deep. The 0.6/0.4 blend cannot tell these apart
+    when value and surplus are equal -- the plan can, and that difference is the phase.
+    """
+
+    def _world(self, *, roster=None, my_budget=43, my_max_bid=50):
+        levels = ReplacementLevels(points={}, starters_drafted={"QB": 12, "RB": 30})
+        qb1 = replace(player("Top QB", "QB", 300, adp=5), market_cost=30.0)
+        qb2 = replace(player("Punt QB", "QB", 220, adp=90), market_cost=1.0)
+        rb1 = replace(player("Top RB", "RB", 250, adp=6), market_cost=30.0)
+        rb2 = replace(player("Deep RB", "RB", 240, adp=40), market_cost=1.0)
+        pool = [qb1, qb2, rb1, rb2]
+        values = dollar_values(
+            {qb1.player_key: 30.0, qb2.player_key: 2.0, rb1.player_key: 30.0,
+             rb2.player_key: 25.0}
+        )
+        # money/slots tuned so inflation is exactly 1.0 and the arithmetic stays legible.
+        picks = recommend_auction(
+            pool,
+            levels,
+            values,
+            engine_settings(),
+            roster if roster is not None else {"WR": 3, "TE": 1, "RB": 1},
+            money_remaining=87,
+            slots_remaining=4,
+            my_max_bid=my_max_bid,
+            my_budget_remaining=my_budget,
+            league_position_counts={"QB": 11, "RB": 29},
+            limit=10,
+        )
+        return {pick.name: pick for pick in picks}
+
+    def test_plan_value_is_monotone_in_budget(self):
+        options = [[(30, 30.0), (1, 2.0)], [(30, 30.0), (1, 25.0)]]
+        sweep = [_plan_value(options, budget) for budget in range(0, 71, 5)]
+        assert all(sweep[i] <= sweep[i + 1] for i in range(len(sweep) - 1))
+        assert sweep[-1] == 60.0  # both tops fundable
+        assert sweep[0] == 0.0
+        assert _plan_value(options, 31) == 55.0  # one top, one punt -- the honest middle
+
+    def test_the_position_with_no_fallback_outranks_the_puntable_one(self):
+        # Equal worth, equal price, equal surplus: the blend cannot tell them apart.
+        # The plan can: buying the QB leaves a $1 RB worth 25; buying the RB leaves a
+        # $1 QB worth 2. The QB's slot is the one that cannot wait.
+        picks = self._world()
+        assert picks["Top QB"].score > picks["Top RB"].score
+
+        degraded = recommend_auction(
+            [pick.valuation for pick in picks.values()],
+            ReplacementLevels(points={}, starters_drafted={"QB": 12, "RB": 30}),
+            dollar_values({pick.valuation.player_key: pick.par for pick in picks.values()}),
+            engine_settings(),
+            {"WR": 3, "TE": 1, "RB": 1},
+            money_remaining=87,
+            slots_remaining=4,
+            my_max_bid=50,
+            limit=10,
+        )
+        by_name = {pick.name: pick for pick in degraded}
+        assert by_name["Top QB"].score == pytest.approx(by_name["Top RB"].score)
+
+    def test_plan_bid_pays_up_when_needs_are_few_and_tightens_when_they_are_many(self):
+        # With only the QB slot open, overpaying costs no other need anything, so the
+        # plan lets the hard ceiling govern. Open an RB need too and the plan stops at
+        # the price that still leaves the RB fundable.
+        only_qb = self._world(roster={"WR": 3, "TE": 1, "RB": 2})
+        qb_and_rb = self._world()
+        assert only_qb["Top QB"].plan_bid == 50
+        assert qb_and_rb["Top QB"].plan_bid == 36
+        assert qb_and_rb["Top QB"].plan_bid < only_qb["Top QB"].plan_bid
+
+    def test_bid_to_respects_every_ceiling(self):
+        for pick in self._world().values():
+            assert pick.bid_to <= pick.max_bid
+            assert pick.bid_to <= pick.smart_cap
+            if pick.plan_bid is not None:
+                assert pick.bid_to <= pick.plan_bid
+
+    def test_degraded_mode_reproduces_the_blend(self):
+        levels = ReplacementLevels(points={}, starters_drafted={"QB": 12, "RB": 30})
+        rb = replace(player("Steady RB", "RB", 150, adp=30), market_cost=20.0)
+        qb = replace(player("Some QB", "QB", 250, adp=20), market_cost=25.0)
+        values = dollar_values({rb.player_key: 24.0, qb.player_key: 20.0})
+        picks = recommend_auction(
+            [rb, qb],
+            levels,
+            values,
+            engine_settings(),
+            {},
+            money_remaining=44,
+            slots_remaining=2,
+            my_max_bid=100,
+            limit=2,
+        )
+        for pick in picks:
+            assert pick.plan_bid is None
+            assert pick.depth_factor == 1.0  # both positions open, so penalized() is identity
+            assert pick.score == pytest.approx(0.6 * (pick.surplus or 0.0) + 0.4 * pick.value)
+            assert pick.bid_to <= min(pick.max_bid, pick.smart_cap)
+
+
 class TestRoomPremiumIntegration:
     def test_room_overpaying_raises_expected_prices(self):
         levels = ReplacementLevels(points={}, starters_drafted={"RB": 30})
@@ -698,6 +803,16 @@ class TestFullAuctionSimulation:
         for team in state.teams:
             assert state.spent(team.team_key) <= BUDGET
             assert state.slots_remaining(team.team_key) == 0
+
+    def test_bid_to_stays_positive_while_my_starters_are_open(self, assistant):
+        # A fresh roster with a full budget: the plan must be telling me to buy real
+        # players, not to sit on my hands. plan_bid == 0 across the board would mean
+        # the DP thinks passing beats every purchase, which is a broken plan.
+        picks = assistant.auction_recommendations(limit=8)
+        assert picks
+        for pick in picks:
+            if pick.affordable:
+                assert pick.bid_to >= MIN_BID
 
     def test_positions_are_all_still_reachable(self, assistant):
         # A pure surplus-chasing engine can starve a position entirely; kickers and
