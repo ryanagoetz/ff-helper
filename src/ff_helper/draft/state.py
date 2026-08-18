@@ -339,7 +339,11 @@ class DraftState:
         return None if upcoming is None else upcoming - current
 
     def team_on_the_clock(self) -> Team | None:
-        slot = self._slot_for_pick(self.current_pick)
+        return self.team_for_pick(self.current_pick)
+
+    def team_for_pick(self, pick: int) -> Team | None:
+        """Which team owns a given pick number, in draft order."""
+        slot = self._slot_for_pick(pick)
         if slot is None:
             return None
         return next((team for team in self.teams if team.draft_position == slot), None)

@@ -219,16 +219,63 @@ class TestAssistantWiring:
         # moment the turn arrives.
         assert len({names[0] for names in seen}) == 1
 
-    def test_te_cliff_pulls_a_tight_end_up_the_board(self, assistant):
-        """With a steep TE decay, VONA should surface a TE earlier than raw points would.
+    def test_a_tight_end_surfaces_when_waiting_starts_to_cost(self, assistant):
+        """The plan defers a safe TE, then surfaces him once deferring stops being free.
 
-        TE0 is far from the highest-scoring player available, so a points-ordered board
-        would never show him near the top early. Scarcity is the only thing that can.
+        At pick 1 every tight end survives to my next several turns, so burning an early
+        pick on one is a reach and none belongs near the top of the board. Deep into the
+        draft, with the skill pools thinned and my TE slot still open, the best one left
+        must rise to the top -- raw points alone would never put him there.
         """
-        picks = assistant.recommendations(limit=12)
-        best_te = next((p for p in picks if p.position == "TE"), None)
+        state = assistant.state
+        early = assistant.recommendations(limit=12)
+        assert all(pick.position != "TE" for pick in early)
+
+        # The room drafts to ADP but leaves every tight end on the board.
+        ordered = sorted(assistant.valuations.valuations.values(), key=lambda v: v.adp)
+        number = 0
+        for valuation in ordered:
+            if number >= 42:
+                break
+            if valuation.position == "TE":
+                continue
+            number += 1
+            state.record_manual(
+                valuation.player_key,
+                pick=number,
+                team_key=state.team_for_pick(number).team_key,
+            )
+
+        picks = assistant.recommendations(limit=3)
+        best_te = next((pick for pick in picks if pick.position == "TE"), None)
         assert best_te is not None
         assert best_te.vona > 0
+
+    def test_opponent_rosters_shape_position_demand(self, assistant):
+        """Once every rival has a quarterback, the room's QB demand collapses.
+
+        Demand is what lets survival say "he'll still be there": ADP thinks every room
+        needs everything, but a rival with a QB is not taking another one as a starter.
+        """
+        state = assistant.state
+        qb_keys = [
+            key for key, value in assistant.valuations.valuations.items() if value.position == "QB"
+        ]
+        rivals = [team for team in state.teams if not team.is_mine]
+        for offset, (team, key) in enumerate(zip(rivals, qb_keys, strict=False)):
+            state.manual[100 + offset] = DraftPick(
+                pick=100 + offset, round=9, team_key=team.team_key, player_key=key
+            )
+
+        current = state.current_pick
+        target = next(pick for pick in state.my_picks if pick >= current)
+        futures = [pick for pick in state.my_picks if pick > target]
+        demand = assistant._position_demand(current, futures, assistant.position_of)
+
+        first = futures[0]
+        assert demand[first]["QB"] == 0.0
+        # Nobody has a tight end yet, so TE demand is untouched.
+        assert demand[first]["TE"] == 1.0
 
     def test_roster_needs_shift_recommendations(self, assistant):
         # Put four running backs on my roster, then check the engine stops pushing them.

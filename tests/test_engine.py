@@ -159,6 +159,21 @@ class TestSurvival:
         # Early picks are near-deterministic but never zero-variance.
         assert estimate_adp_stdev(1) >= 1.5
 
+    def test_low_demand_raises_survival(self):
+        # ADP is measured across rooms where everyone needs everything. If none of the
+        # intervening teams needs a QB, this QB's hazard shrinks -- but never to zero,
+        # because teams draft bench and best-player-available too.
+        target = player("x", "QB", 200, adp=20, stdev=6)
+        base = survival_probability(target, current_pick=10, target_pick=20)
+        quiet = survival_probability(target, current_pick=10, target_pick=20, demand=0.0)
+        assert quiet > base
+        assert quiet < 1.0
+
+    def test_full_demand_is_the_plain_adp_model(self):
+        target = player("x", "QB", 200, adp=20, stdev=6)
+        base = survival_probability(target, current_pick=10, target_pick=20)
+        assert survival_probability(target, current_pick=10, target_pick=20, demand=1.0) == base
+
 
 class TestExpectedBestAvailable:
     def test_more_depth_means_higher_expected_survivor(self):
@@ -174,6 +189,20 @@ class TestExpectedBestAvailable:
     def test_empty_pool_is_replacement_level(self):
         levels = replacement.ReplacementLevels(points={"WR": 100.0}, starters_drafted={})
         assert expected_best_available([], levels, current_pick=1, target_pick=10) == 0.0
+
+    def test_a_second_slot_cannot_lean_on_the_same_fallback(self):
+        # Two starting slots at one position: the second is priced at the expected
+        # second-best survivor, not the best one counted twice.
+        levels = replacement.ReplacementLevels(points={"WR": 100.0}, starters_drafted={"WR": 24})
+        pool = [
+            player("w1", "WR", 160, adp=40, stdev=4),
+            player("w2", "WR", 120, adp=42, stdev=4),
+        ]
+        best = expected_best_available(pool, levels, current_pick=10, target_pick=20)
+        second = expected_best_available(pool, levels, current_pick=10, target_pick=20, rank=2)
+        assert second < best
+        # Both all but certainly survive, so rank 2 lands on the second player's VOR.
+        assert second == pytest.approx(20, abs=3)
 
 
 class TestDepthMultiplier:
@@ -212,10 +241,11 @@ class TestRecommend:
         )
         available = [
             player("Elite WR", "WR", 180, adp=13, stdev=4),
-            # A deep, flat WR corps going *after* the next pick, so waiting costs little.
-            # (Giving these ADPs before the horizon would mean they are gone too, which
-            # tests nothing about depth.)
-            *[player(f"WR{i}", "WR", 176 - i, adp=27 + i * 2, stdev=5) for i in range(5)],
+            # A deep, flat WR corps going well *after* the next pick, so waiting costs
+            # little -- at pick 25 and at the picks after it. (If the tier died between
+            # my turns, grabbing elite WRs early would genuinely be right: with two WR
+            # slots to fill, a tier that allows only one more WR pick rewards stacking.)
+            *[player(f"WR{i}", "WR", 176 - i, adp=40 + i * 2, stdev=5) for i in range(5)],
             # The RB is slightly worse but the next RB is a chasm below, and the drop
             # happens before the next pick comes back around.
             player("Last good RB", "RB", 170, adp=14, stdev=4),
@@ -263,21 +293,20 @@ class TestRecommend:
         assert picks[0].name == "Healthy"
 
     def test_a_filled_position_cannot_promote_a_weak_player(self):
-        """Regression: penalties on a negative score must sink, not float.
+        """A backup must rank below the identical player who still fills a starting slot.
 
-        Both twins have strongly negative VONA (a stud at their position survives to the
-        next pick easily). Holding four running backs must push the RB twin *below* the
-        otherwise-identical WR twin -- the old multiply shrank his negative score toward
-        zero and ranked him above her.
+        The twins are gone by the next pick either way (take now or never), so the plan
+        term is the same for both and the ranking isolates the depth penalty: holding
+        four running backs must push the RB twin *below* the otherwise-identical WR twin.
         """
         levels = replacement.ReplacementLevels(
             points={"RB": 100.0, "WR": 100.0}, starters_drafted={"RB": 30, "WR": 36}
         )
         available = [
-            player("Stud RB", "RB", 200, adp=60, stdev=4),
-            player("Twin RB", "RB", 130, adp=60, stdev=4),
-            player("Stud WR", "WR", 200, adp=60, stdev=4),
-            player("Twin WR", "WR", 130, adp=60, stdev=4),
+            player("Stud RB", "RB", 200, adp=12, stdev=4),
+            player("Twin RB", "RB", 130, adp=13, stdev=4),
+            player("Stud WR", "WR", 200, adp=12, stdev=4),
+            player("Twin WR", "WR", 130, adp=13, stdev=4),
         ]
         picks = recommend(
             available,
@@ -290,6 +319,67 @@ class TestRecommend:
         )
         names = [pick.name for pick in picks]
         assert names.index("Twin WR") < names.index("Twin RB")
+
+    def test_a_player_who_will_survive_is_deferred(self):
+        """The plan does not reach for a faller, however well he grades.
+
+        The lone TE is the best VOR on the board, but he will still be there at my next
+        several picks, while the last real RB is gone imminently. A raw-value board leads
+        with the TE; the plan takes the RB and collects the TE at 25.
+        """
+        levels = replacement.ReplacementLevels(
+            points={"RB": 100.0, "TE": 100.0}, starters_drafted={"RB": 30, "TE": 12}
+        )
+        available = [
+            player("Lone TE", "TE", 200, adp=80, stdev=6),
+            player("Last RB", "RB", 170, adp=13, stdev=4),
+            *[player(f"RB{i}", "RB", 115 - i * 3, adp=30 + i * 4, stdev=6) for i in range(4)],
+        ]
+        picks = recommend(available, levels, settings(), {}, current_pick=12, next_pick=25)
+        assert picks[0].name == "Last RB"
+
+    def test_two_open_slots_reward_stacking_a_dying_tier(self):
+        """Multi-slot reasoning the one-pick VONA model could not do.
+
+        Same shape as the scarce-position test but the flat WR tier dies *between* my
+        next two picks. With two WR slots open, that tier only has one more WR pick in
+        it: elite-WR-now plus flat-WR-at-25 fills both slots at full value, while
+        RB-now means the second WR slot is filled from a dead tier. Enumerating the
+        strategies with the model's own numbers: WR-now nets ~169, RB-now ~157.
+        """
+        levels = replacement.ReplacementLevels(
+            points={"RB": 100.0, "WR": 100.0}, starters_drafted={"RB": 30, "WR": 36}
+        )
+        available = [
+            player("Elite WR", "WR", 180, adp=13, stdev=4),
+            *[player(f"WR{i}", "WR", 176 - i, adp=27 + i * 2, stdev=5) for i in range(5)],
+            player("Last good RB", "RB", 170, adp=14, stdev=4),
+            *[player(f"RB{i}", "RB", 118 - i * 3, adp=30 + i * 4, stdev=6) for i in range(5)],
+        ]
+        picks = recommend(available, levels, settings(), {}, current_pick=12, next_pick=25)
+        assert picks[0].name == "Elite WR"
+
+    def test_explicit_future_picks_behave_like_the_padded_fallback(self):
+        levels = replacement.ReplacementLevels(
+            points={"RB": 100.0, "WR": 100.0}, starters_drafted={"RB": 30, "WR": 36}
+        )
+        available = [
+            player("Elite WR", "WR", 180, adp=13, stdev=4),
+            *[player(f"WR{i}", "WR", 176 - i, adp=40 + i * 2, stdev=5) for i in range(5)],
+            player("Last good RB", "RB", 170, adp=14, stdev=4),
+            *[player(f"RB{i}", "RB", 118 - i * 3, adp=30 + i * 4, stdev=6) for i in range(5)],
+        ]
+        padded = recommend(available, levels, settings(), {}, current_pick=12, next_pick=25)
+        explicit = recommend(
+            available,
+            levels,
+            settings(),
+            {},
+            current_pick=12,
+            next_pick=25,
+            future_picks=[25, 38, 51, 64, 77, 90, 103, 116],
+        )
+        assert [pick.name for pick in explicit] == [pick.name for pick in padded]
 
     def test_injury_cannot_promote_a_negative_score(self):
         # Same shape: the twins' blended score is negative, and halving a negative score

@@ -23,10 +23,10 @@ from ff_helper.engine.auction import (
     Sale,
     compute_par_values,
     inflation_factor,
-    need_factor,
     recommend_auction,
     room_premiums,
 )
+from ff_helper.engine.lineup import need_factor
 from ff_helper.engine.replacement import ReplacementLevels
 from ff_helper.web.app import create_app
 from ff_helper.yahoo.models import DraftPick, League, LeagueSettings, Team

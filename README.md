@@ -51,7 +51,11 @@ room against people looking at Yahoo's rankings.
 **Scarcity — what does waiting cost?**
 This is the part that differs by format.
 
-*Snake:* **VONA** (Value Over Next Available):
+*Snake:* a **needs-to-picks plan**. Each candidate is scored as *his value now, plus the
+best assignment of your remaining starter needs to your remaining picks* — which is the
+question a one-line cheat sheet can't ask: "RB now and WR at 40, or the reverse?" A second
+slot at the same position is priced at the expected *second*-best survivor, because two
+slots can't lean on the same fallback. The classic **VONA** number is still shown:
 
 ```
 VONA(player) = VOR(player) − E[VOR of best player at his position at my next pick]
@@ -62,6 +66,12 @@ fat tails — players slide on injury news, get reached for on hype — and a Ga
 someone sitting 20 picks past his ADP mathematically impossible. Survival is also
 conditioned on the player being available *right now*, which is what makes the model
 usable on exactly the fallers you most want advice about.
+
+Survival also watches **who is picking**: between your turns, specific teams pick in a
+known order, and a rival whose quarterback slot is full isn't taking a quarterback. ADP is
+measured across rooms where everyone needs everything; when the teams picking before your
+next turn don't need a position, its players' hazard shrinks (never to zero — bench picks
+happen) and the board says so: *"few teams before pick 77 need a QB."*
 
 *Auction:* **surplus** — the same idea in dollars.
 

@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 
 from ff_helper.draft.state import DraftState
-from ff_helper.engine import replacement
+from ff_helper.engine import lineup, replacement
 from ff_helper.engine.auction import (
     AuctionRecommendation,
     DollarValues,
@@ -179,8 +179,18 @@ class Assistant:
             my_turn = next((pick for pick in self.state.my_picks if pick >= current), None)
             target = my_turn if my_turn is not None else current
             next_pick = self.state.next_pick_after(target)
-            roster = self.state.my_roster_counts(self.position_of)
+            position_of = self.position_of
+            roster = self.state.my_roster_counts(position_of)
             available = self.available()
+
+            # My remaining turns after this one, for the needs-to-picks plan.
+            future_picks = [pick for pick in self.state.my_picks if pick > target]
+
+            # For each future turn: what share of the intervening picks belongs to teams
+            # that still need each position as a starter? ADP assumes every room needs
+            # everything; this room's rosters say otherwise, and the survival model uses
+            # the difference.
+            position_demand = self._position_demand(current, future_picks, position_of)
 
         if self.league.settings is None or not available:
             return []
@@ -192,8 +202,59 @@ class Assistant:
             roster,
             current_pick=current,
             next_pick=next_pick,
+            future_picks=future_picks,
+            position_demand=position_demand,
             limit=limit,
         )
+
+    def _position_demand(
+        self,
+        current: int,
+        future_picks: list[int],
+        position_of: dict[str, str],
+    ) -> dict[int, dict[str, float]]:
+        """Per future pick of mine: the share of intervening picks that still chase each
+        position. Caller must hold the lock."""
+        settings = self.league.settings
+        if settings is None or not future_picks:
+            return {}
+
+        needed_by_team: dict[str, set[str]] = {}
+        for team in self.state.teams:
+            counts = self.state.roster_counts(team.team_key, position_of)
+            open_dedicated, open_flex, _ = lineup.assign_lineup(counts, settings)
+            needed = {position for position, count in open_dedicated.items() if count > 0}
+            for eligible, count in open_flex:
+                if count > 0:
+                    needed |= eligible
+            needed_by_team[team.team_key] = needed
+
+        my_team = self.state.my_team
+        my_key = my_team.team_key if my_team else None
+
+        demand: dict[int, dict[str, float]] = {}
+        for target in future_picks:
+            rivals = [
+                team
+                for pick in range(current, target)
+                if (team := self.state.team_for_pick(pick)) is not None
+                and team.team_key != my_key
+            ]
+            if not rivals:
+                continue
+            shares: dict[str, float] = {}
+            # Every position the league starts somewhere -- a position nobody needs any
+            # more must land at share 0.0, not fall through to the neutral default.
+            positions: set[str] = set()
+            for slot in settings.starting_slots:
+                positions |= slot.eligible_positions
+            for position in positions:
+                chasing = sum(
+                    1 for team in rivals if position in needed_by_team.get(team.team_key, set())
+                )
+                shares[position] = chasing / len(rivals)
+            demand[target] = shares
+        return demand
 
     def auction_recommendations(self, limit: int = 8) -> list[AuctionRecommendation]:
         """Where your remaining dollars go furthest, right now.
