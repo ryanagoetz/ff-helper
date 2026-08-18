@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 
 from ff_helper.engine.scoring import score_row
 from ff_helper.rankings.players import PlayerRegistry, SourceRow
-from ff_helper.yahoo.models import LeagueSettings, YahooPlayer
+from ff_helper.yahoo.models import DEFAULT_AUCTION_BUDGET, LeagueSettings, YahooPlayer
 
 # How much each ADP source counts toward the blended mean. Yahoo dominates because the
 # draft happens on Yahoo, against opponents looking at Yahoo's own rankings.
@@ -154,7 +154,12 @@ def _combine(player: YahooPlayer, rows: list[SourceRow], settings: LeagueSetting
         if row.tier is not None:
             tiers.append(row.tier)
         if row.auction_cost is not None and row.auction_cost > 0:
-            costs.append(row.auction_cost)
+            cost = row.auction_cost
+            if row.source == "yahoo":
+                # Yahoo's average_cost is measured across default $200 rooms. A CSV cost
+                # is left alone: the user exports it for their own league.
+                cost *= settings.auction_budget / DEFAULT_AUCTION_BUDGET
+            costs.append(cost)
 
     adp = _weighted_adp(adp_values)
     return {

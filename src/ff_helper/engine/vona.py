@@ -122,6 +122,17 @@ def expected_best_available(
     return expected
 
 
+def penalized(score: float, factor: float) -> float:
+    """Apply a 0-1 penalty factor so it always lowers the score.
+
+    A bare multiply flips its meaning on a negative score: halving -20 gives -10, which
+    *promotes* the player being penalised. An overpriced player at a filled position must
+    rank below the same player at an open one, so a penalty divides when the score is
+    already negative -- monotone down in both halves.
+    """
+    return score * factor if score >= 0 else score / factor
+
+
 def depth_multiplier(count_at_position: int, starters_needed: int) -> float:
     """How much a marginal player at this position is worth given what you already have.
 
@@ -196,9 +207,9 @@ def recommend(
 
         # Blend value and scarcity. VONA alone over-rewards a thin position where every
         # option is mediocre, so raw VOR keeps a floor under the ranking.
-        score = (0.65 * vona + 0.35 * vor) * depth
+        score = penalized(0.65 * vona + 0.35 * vor, depth)
         if valuation.is_injured:
-            score *= 0.5
+            score = penalized(score, 0.5)
 
         recommendations.append(
             Recommendation(

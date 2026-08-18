@@ -16,6 +16,7 @@ from ff_helper.engine import replacement
 from ff_helper.engine.auction import (
     AuctionRecommendation,
     DollarValues,
+    Sale,
     compute_par_values,
     inflation_factor,
     recommend_auction,
@@ -204,11 +205,37 @@ class Assistant:
             return []
 
         with self.lock:
-            roster = self.state.my_roster_counts(self.position_of)
+            position_of = self.position_of
+            roster = self.state.my_roster_counts(position_of)
             available = self.available()
             money_remaining = self.state.league_money_remaining()
             slots_remaining = self.state.league_slots_remaining()
             my_max_bid = self.state.my_max_bid()
+            my_team = self.state.my_team
+            my_budget = self.state.budget_remaining(my_team.team_key) if my_team else None
+
+            # Positions rostered across the whole league, keepers included -- the smart
+            # cap needs to know how many teams still compete for each position's leftovers.
+            league_counts: dict[str, int] = {}
+            for team in self.state.teams:
+                for position, count in self.state.roster_counts(team.team_key, position_of).items():
+                    league_counts[position] = league_counts.get(position, 0) + count
+
+            # Completed sales with real prices feed the room premium. Keeper salaries are
+            # not sales and carry no price on the board, so they fall out naturally.
+            sales: list[Sale] = []
+            for pick in self.state.board.values():
+                if pick.cost is None or pick.cost <= 0:
+                    continue
+                valuation = self.valuations.valuations.get(pick.player_key)
+                if valuation is None:
+                    continue
+                expected = valuation.market_cost
+                if expected is None:
+                    expected = self.dollars.value_of(pick.player_key)
+                sales.append(
+                    Sale(position=valuation.position, price=float(pick.cost), expected=expected)
+                )
 
         if not available:
             return []
@@ -222,6 +249,9 @@ class Assistant:
             money_remaining=money_remaining,
             slots_remaining=slots_remaining,
             my_max_bid=my_max_bid,
+            my_budget_remaining=my_budget,
+            league_position_counts=league_counts,
+            sales=sales,
             limit=limit,
         )
 

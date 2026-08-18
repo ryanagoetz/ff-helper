@@ -9,6 +9,7 @@ from ff_helper.engine.scoring import score_stats, scoring_slug
 from ff_helper.engine.vona import (
     depth_multiplier,
     expected_best_available,
+    penalized,
     recommend,
     survival_probability,
     survival_probability_at,
@@ -188,6 +189,16 @@ class TestDepthMultiplier:
         assert depth_multiplier(3, 1) < 0.2
 
 
+class TestPenalized:
+    def test_scales_positive_scores_down(self):
+        assert penalized(20.0, 0.5) == 10.0
+
+    def test_pushes_negative_scores_further_down(self):
+        # A bare multiply would give -10, *promoting* the penalised player.
+        assert penalized(-20.0, 0.5) == -40.0
+        assert penalized(-20.0, 0.5) < -20.0
+
+
 class TestRecommend:
     def test_prefers_the_scarce_position_over_higher_raw_value(self):
         """The central claim of the app.
@@ -250,6 +261,48 @@ class TestRecommend:
 
         picks = recommend([healthy, hurt], levels, settings(), {}, current_pick=20, next_pick=33)
         assert picks[0].name == "Healthy"
+
+    def test_a_filled_position_cannot_promote_a_weak_player(self):
+        """Regression: penalties on a negative score must sink, not float.
+
+        Both twins have strongly negative VONA (a stud at their position survives to the
+        next pick easily). Holding four running backs must push the RB twin *below* the
+        otherwise-identical WR twin -- the old multiply shrank his negative score toward
+        zero and ranked him above her.
+        """
+        levels = replacement.ReplacementLevels(
+            points={"RB": 100.0, "WR": 100.0}, starters_drafted={"RB": 30, "WR": 36}
+        )
+        available = [
+            player("Stud RB", "RB", 200, adp=60, stdev=4),
+            player("Twin RB", "RB", 130, adp=60, stdev=4),
+            player("Stud WR", "WR", 200, adp=60, stdev=4),
+            player("Twin WR", "WR", 130, adp=60, stdev=4),
+        ]
+        picks = recommend(
+            available,
+            levels,
+            settings(),
+            roster_counts={"RB": 4},
+            current_pick=10,
+            next_pick=25,
+            limit=10,
+        )
+        names = [pick.name for pick in picks]
+        assert names.index("Twin WR") < names.index("Twin RB")
+
+    def test_injury_cannot_promote_a_negative_score(self):
+        # Same shape: the twins' blended score is negative, and halving a negative score
+        # used to *raise* the injured one above his healthy double.
+        levels = replacement.ReplacementLevels(points={"RB": 100.0}, starters_drafted={"RB": 30})
+        available = [
+            player("Stud", "RB", 200, adp=60, stdev=4),
+            player("Healthy twin", "RB", 130, adp=60, stdev=4),
+            player("Hurt twin", "RB", 130, adp=60, stdev=4, status="IR"),
+        ]
+        picks = recommend(available, levels, settings(), {}, current_pick=10, next_pick=25)
+        names = [pick.name for pick in picks]
+        assert names.index("Healthy twin") < names.index("Hurt twin")
 
     def test_last_pick_falls_back_to_raw_value(self):
         levels = replacement.ReplacementLevels(

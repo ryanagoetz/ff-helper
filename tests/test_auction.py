@@ -9,6 +9,7 @@ loudly broken -- dollar conversion, live inflation, and the max-bid ceiling.
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,14 +19,21 @@ from ff_helper.draft.state import DraftState
 from ff_helper.engine.auction import (
     MAX_INFLATION,
     MIN_BID,
+    DollarValues,
+    Sale,
     compute_par_values,
     inflation_factor,
+    need_factor,
     recommend_auction,
+    room_premiums,
 )
+from ff_helper.engine.replacement import ReplacementLevels
 from ff_helper.web.app import create_app
 from ff_helper.yahoo.models import DraftPick, League, LeagueSettings, Team
 from ff_helper.yahoo.parse import content as strip_envelope
 from ff_helper.yahoo.parse import parse_league, unwrap
+from tests.test_engine import player
+from tests.test_engine import settings as engine_settings
 from tests.test_web import (
     MY_SLOT,
     NUM_TEAMS,
@@ -356,6 +364,219 @@ class TestAuctionRecommendations:
 
     def test_every_recommendation_carries_a_reason(self, assistant):
         assert all(pick.reason for pick in assistant.auction_recommendations(limit=8))
+
+
+def dollar_values(par: dict[str, float]) -> DollarValues:
+    return DollarValues(par=par, dollars_per_vor=1.0, pool_size=len(par))
+
+
+class TestRoomPremiums:
+    def test_no_sales_is_neutral(self):
+        assert room_premiums([]).at("RB") == 1.0
+
+    def test_consistent_overpaying_raises_the_premium(self):
+        # The room pays 150% of sheet for ten straight running backs. The RB premium
+        # should move most, the room-wide one less, and shrinkage keeps both shy of 1.5.
+        sales = [Sale("RB", price=30.0, expected=20.0) for _ in range(10)]
+        premiums = room_premiums(sales)
+        assert 1.0 < premiums.at("WR") < premiums.at("RB") < 1.5
+
+    def test_minimum_bid_sales_say_nothing(self):
+        # $1 players selling for $5 is pocket change, not a 400% market signal.
+        sales = [Sale("RB", price=5.0, expected=1.0) for _ in range(10)]
+        assert room_premiums(sales).at("RB") == 1.0
+
+    def test_one_wild_price_is_clamped(self):
+        sales = [Sale("RB", price=500.0, expected=5.0)]
+        premiums = room_premiums(sales)
+        assert premiums.at("RB") < 2.5
+        assert premiums.at("WR") < 1.5
+
+
+class TestNeedFactor:
+    def test_open_dedicated_slot_is_full_value(self):
+        assert need_factor({}, "RB", engine_settings()) == 1.0
+
+    def test_flex_keeps_a_position_live_after_dedicated_slots_fill(self):
+        assert need_factor({"RB": 2}, "RB", engine_settings()) == 1.0
+
+    def test_a_flex_spoken_for_by_another_position_is_not_counted(self):
+        # The old starters_at logic called this a 3-RB league even though three
+        # receivers already occupy the second WR slot and the flex.
+        assert need_factor({"RB": 2, "WR": 3}, "RB", engine_settings()) < 1.0
+
+    def test_backups_decay(self):
+        first = need_factor({"RB": 3}, "RB", engine_settings())
+        second = need_factor({"RB": 4}, "RB", engine_settings())
+        assert 1.0 > first > second
+
+
+class TestMarketEstimation:
+    def _pool(self, *, overpaid: bool = False):
+        levels = ReplacementLevels(points={"RB": 100.0}, starters_drafted={"RB": 30})
+        pool = [player(f"RB{i}", "RB", 250 - i * 10, adp=i + 1) for i in range(8)]
+        values = compute_par_values(pool, levels, auction_settings(), NUM_TEAMS)
+        priced = []
+        for index, valuation in enumerate(pool):
+            if index == 3:
+                priced.append(valuation)  # nobody published a price for him
+            elif overpaid:
+                cost = values.value_of(valuation.player_key) * 1.3
+                priced.append(replace(valuation, market_cost=cost))
+            else:
+                priced.append(replace(valuation, market_cost=60.0 - index * 7))
+        return priced, levels, values
+
+    def _recommend(self, pool, levels, values):
+        return recommend_auction(
+            pool,
+            levels,
+            values,
+            auction_settings(),
+            {},
+            money_remaining=NUM_TEAMS * BUDGET,
+            slots_remaining=NUM_TEAMS * auction_settings().roster_size,
+            my_max_bid=BUDGET,
+            limit=len(pool),
+        )
+
+    def test_unpriced_players_get_an_interpolated_market(self):
+        pool, levels, values = self._pool()
+        picks = self._recommend(pool, levels, values)
+        target = next(pick for pick in picks if pick.name == "RB3")
+        assert target.market_estimated
+        # Between his par-value neighbours' published prices ($46 and $32).
+        assert 32.0 <= target.market <= 46.0
+        assert "market est." in target.reason
+
+    def test_an_unpriced_player_gets_no_free_pass(self):
+        # Everyone measurable is overpaid by 30%. Scoring the unpriced player as if the
+        # market were exactly fair used to float him above better, priced players.
+        pool, levels, values = self._pool(overpaid=True)
+        picks = self._recommend(pool, levels, values)
+        names = [pick.name for pick in picks]
+        assert names.index("RB2") < names.index("RB3")
+
+
+class TestPenaltiesSink:
+    def test_a_filled_position_sinks_an_overpriced_player(self):
+        """Regression: with a negative score, the depth multiply used to *promote*.
+
+        Two identical twins, both priced $60 by the room against $20 of worth. Holding
+        four running backs must push the RB twin below the WR twin.
+        """
+        levels = ReplacementLevels(points={}, starters_drafted={"RB": 30, "WR": 36})
+        rb = replace(player("RB twin", "RB", 150, adp=30), market_cost=60.0)
+        wr = replace(player("WR twin", "WR", 150, adp=30), market_cost=60.0)
+        values = dollar_values({rb.player_key: 20.0, wr.player_key: 20.0})
+
+        picks = recommend_auction(
+            [rb, wr],
+            levels,
+            values,
+            engine_settings(),
+            {"RB": 4},
+            money_remaining=40,
+            slots_remaining=2,
+            my_max_bid=100,
+            limit=2,
+        )
+        assert picks[0].position == "WR"
+
+    def test_injury_sinks_not_floats_an_overpriced_player(self):
+        levels = ReplacementLevels(points={}, starters_drafted={"RB": 30})
+        healthy = replace(player("Healthy", "RB", 150, adp=30), market_cost=60.0)
+        hurt = replace(player("Hurt", "RB", 150, adp=30, status="O"), market_cost=60.0)
+        values = dollar_values({healthy.player_key: 20.0, hurt.player_key: 20.0})
+
+        picks = recommend_auction(
+            [healthy, hurt],
+            levels,
+            values,
+            engine_settings(),
+            {},
+            money_remaining=40,
+            slots_remaining=2,
+            my_max_bid=100,
+            limit=2,
+        )
+        assert picks[0].name == "Healthy"
+
+
+class TestSmartCap:
+    def _scenario(self, **overrides):
+        # My roster lacks only a quarterback (plus bench). The remaining QBs go for
+        # real money, so bidding on a bench back must leave more than $1 for the slot.
+        levels = ReplacementLevels(
+            points={}, starters_drafted={"QB": 12, "RB": 30, "WR": 36, "TE": 12}
+        )
+        qbs = [
+            replace(player(f"QB{i}", "QB", 300 - i * 10, adp=i + 1), market_cost=40.0 - i * 5.0)
+            for i in range(3)
+        ]
+        bench_rb = replace(player("Bench RB", "RB", 120, adp=50), market_cost=10.0)
+        pool = qbs + [bench_rb]
+        values = dollar_values(
+            {**{qb.player_key: 35.0 for qb in qbs}, bench_rb.player_key: 20.0}
+        )
+        kwargs = dict(
+            money_remaining=125,
+            slots_remaining=4,
+            my_max_bid=55,
+            my_budget_remaining=60,
+            league_position_counts={"QB": 0},
+            limit=10,
+        )
+        kwargs.update(overrides)
+        picks = recommend_auction(
+            pool,
+            levels,
+            values,
+            engine_settings(),
+            {"RB": 3, "WR": 3, "TE": 1},
+            **kwargs,
+        )
+        return picks
+
+    def test_reserves_real_money_for_open_starters(self):
+        picks = self._scenario()
+        bench_rb = next(pick for pick in picks if pick.name == "Bench RB")
+        # $60 in hand, but the open QB slot will cost about $30 (the cheapest QB the
+        # league's demand leaves reachable) and four bench spots $1 each.
+        assert bench_rb.smart_cap == 26
+        assert bench_rb.smart_cap < bench_rb.max_bid
+        assert bench_rb.bid_to <= bench_rb.smart_cap
+
+    def test_the_player_filling_the_slot_releases_its_reservation(self):
+        picks = self._scenario()
+        qb = next(pick for pick in picks if pick.position == "QB")
+        # Buying a QB is what the reservation was *for*; only bench dollars stay parked.
+        assert qb.smart_cap == 55
+
+    def test_without_budget_info_the_hard_ceiling_stands(self):
+        picks = self._scenario(my_budget_remaining=None)
+        assert all(pick.smart_cap == pick.max_bid for pick in picks)
+
+
+class TestRoomPremiumIntegration:
+    def test_room_overpaying_raises_expected_prices(self):
+        levels = ReplacementLevels(points={}, starters_drafted={"RB": 30})
+        rb = replace(player("Steady RB", "RB", 150, adp=30), market_cost=20.0)
+        values = dollar_values({rb.player_key: 20.0})
+        kwargs = dict(money_remaining=20, slots_remaining=1, my_max_bid=100, limit=1)
+
+        cold = recommend_auction([rb], levels, values, engine_settings(), {}, **kwargs)
+        hot = recommend_auction(
+            [rb],
+            levels,
+            values,
+            engine_settings(),
+            {},
+            sales=[Sale("RB", price=30.0, expected=20.0)] * 10,
+            **kwargs,
+        )
+        assert hot[0].market > cold[0].market
+        assert not hot[0].market_estimated
 
 
 class TestAuctionAPI:

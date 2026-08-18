@@ -27,10 +27,11 @@ because most drafters are still working off a cheat sheet printed before the dra
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import bisect
+from dataclasses import dataclass, field
 
 from ff_helper.engine.replacement import ReplacementLevels
-from ff_helper.engine.vona import depth_multiplier
+from ff_helper.engine.vona import depth_multiplier, penalized
 from ff_helper.rankings.blend import PlayerValuation
 from ff_helper.yahoo.models import LeagueSettings
 
@@ -140,18 +141,203 @@ def inflation_factor(
     return max(MIN_INFLATION, min(MAX_INFLATION, discretionary_remaining / par_surplus))
 
 
+# -- live price calibration ------------------------------------------------------------
+
+# How many sales' worth of belief in "the room pays sheet price" a premium starts with.
+# A position needs more evidence than the room overall before its premium moves, because
+# per-position sale counts are small and one $75 sale should not triple every TE.
+_PREMIUM_PRIOR_POSITION = 5.0
+_PREMIUM_PRIOR_GLOBAL = 8.0
+
+# Sales expected to go near the minimum bid say nothing about the room: a $3 player
+# selling for $5 is a 67% premium in ratio terms and pocket change in real ones.
+_PREMIUM_MIN_EXPECTED = 3.0
+
+# One misread price (a $150 typo on a $15 player) must not swamp the average.
+_RATIO_FLOOR = 0.2
+_RATIO_CEILING = 5.0
+
+
+@dataclass(frozen=True)
+class Sale:
+    """One completed sale, reduced to what price calibration needs."""
+
+    position: str
+    price: float
+    expected: float  # pre-draft market cost, falling back to par value
+
+
+@dataclass(frozen=True)
+class RoomPremiums:
+    """How much this room actually pays relative to the pre-draft sheet.
+
+    Distinct from ``inflation_factor``: inflation is an accounting identity (money left
+    over talent left) about what prices *must* do from here, while a premium is an
+    observation about what this room *chooses* to pay -- overall and per position. A room
+    that pays 130% of sheet for running backs and 70% for quarterbacks has inflation 1.0
+    and two very different premiums.
+    """
+
+    overall: float = 1.0
+    by_position: dict[str, float] = field(default_factory=dict)
+
+    def at(self, position: str) -> float:
+        return self.by_position.get(position, self.overall)
+
+
+def room_premiums(sales: list[Sale]) -> RoomPremiums:
+    """Estimate the room's paying habits from the sales so far.
+
+    Each ratio is shrunk toward neutral: the position premium starts at the room-wide one
+    (itself starting at 1.0) and only moves as real sales accumulate, so an empty or
+    young draft reports 1.0 rather than the noise of its first two prices.
+    """
+    ratios: list[tuple[str, float]] = []
+    for sale in sales:
+        if sale.expected < _PREMIUM_MIN_EXPECTED or sale.price <= 0:
+            continue
+        ratio = max(_RATIO_FLOOR, min(_RATIO_CEILING, sale.price / sale.expected))
+        ratios.append((sale.position, ratio))
+
+    overall = (_PREMIUM_PRIOR_GLOBAL + sum(r for _, r in ratios)) / (
+        _PREMIUM_PRIOR_GLOBAL + len(ratios)
+    )
+
+    by_position: dict[str, list[float]] = {}
+    for position, ratio in ratios:
+        by_position.setdefault(position, []).append(ratio)
+
+    return RoomPremiums(
+        overall=overall,
+        by_position={
+            position: (_PREMIUM_PRIOR_POSITION * overall + sum(group))
+            / (_PREMIUM_PRIOR_POSITION + len(group))
+            for position, group in by_position.items()
+        },
+    )
+
+
+def _estimate_markets(
+    available: list[PlayerValuation], values: DollarValues
+) -> dict[str, float]:
+    """A market price, interpolated by par value, for players no source priced.
+
+    Yahoo publishes no auction cost for deep players. Scoring them as if the market were
+    exactly fair (surplus zero) ranks them above comparable players whose measured surplus
+    is slightly negative, so instead we read the market off the players who *do* have one:
+    sort the priced players by par value and interpolate at the unpriced player's par.
+    """
+    known = sorted(
+        (values.value_of(v.player_key), v.market_cost)
+        for v in available
+        if v.market_cost is not None
+    )
+    if not known:
+        return {}
+
+    pars = [par for par, _ in known]
+    markets = [market for _, market in known]
+
+    estimates: dict[str, float] = {}
+    for valuation in available:
+        if valuation.market_cost is not None:
+            continue
+        par = values.value_of(valuation.player_key)
+        index = bisect.bisect_left(pars, par)
+        if index <= 0:
+            estimate = markets[0]
+        elif index >= len(pars):
+            estimate = markets[-1]
+        else:
+            low_par, high_par = pars[index - 1], pars[index]
+            span = high_par - low_par
+            t = (par - low_par) / span if span > 0 else 0.5
+            estimate = markets[index - 1] + t * (markets[index] - markets[index - 1])
+        estimates[valuation.player_key] = max(float(MIN_BID), estimate)
+    return estimates
+
+
+# -- roster need -----------------------------------------------------------------------
+
+
+def _assign_lineup(
+    roster_counts: dict[str, int], settings: LeagueSettings
+) -> tuple[dict[str, int], list[tuple[frozenset[str], int]], dict[str, int]]:
+    """Greedily place the players you hold into real lineup slots.
+
+    Returns (open dedicated slots by position, open flex slots as (eligible, count),
+    backups by position -- players holding no starting slot at all).
+    """
+    open_dedicated: dict[str, int] = {}
+    flex: list[list] = []  # [eligible positions, slots left]
+    for slot in settings.starting_slots:
+        eligible = slot.eligible_positions
+        if len(eligible) == 1:
+            position = next(iter(eligible))
+            open_dedicated[position] = open_dedicated.get(position, 0) + slot.count
+        else:
+            flex.append([eligible, slot.count])
+
+    backups: dict[str, int] = {}
+    for position, count in roster_counts.items():
+        remaining = count
+        used = min(remaining, open_dedicated.get(position, 0))
+        if used:
+            open_dedicated[position] -= used
+            remaining -= used
+        for entry in flex:
+            if remaining <= 0:
+                break
+            if position in entry[0] and entry[1] > 0:
+                used = min(remaining, entry[1])
+                entry[1] -= used
+                remaining -= used
+        if remaining:
+            backups[position] = backups.get(position, 0) + remaining
+
+    open_flex = [(eligible, count) for eligible, count in flex]
+    return open_dedicated, open_flex, backups
+
+
+def need_factor(
+    roster_counts: dict[str, int], position: str, settings: LeagueSettings
+) -> float:
+    """How much a marginal player at this position is worth given your open lineup slots.
+
+    Replaces the ``starters_at``-based discount, which counts a flex slot toward every
+    position that can fill it -- making a 2RB+1FLEX league look like a 3-RB league even
+    when the flex is already spoken for by a receiver. Here the players you hold are
+    assigned to real slots (dedicated first, then flex), and the candidate is valued by
+    the slot he would actually fill: any open starting slot is full value, a bench spot
+    decays with how many backups you already hold at his position.
+    """
+    open_dedicated, open_flex, backups = _assign_lineup(roster_counts, settings)
+    if open_dedicated.get(position, 0) > 0:
+        return 1.0
+    if any(position in eligible and count > 0 for eligible, count in open_flex):
+        return 1.0
+    # depth_multiplier with one required starter maps "n backups held" onto the shared
+    # decay table: the first backup is still bye-week insurance, the fourth is filler.
+    return depth_multiplier(backups.get(position, 0) + 1, 1)
+
+
 @dataclass(frozen=True)
 class AuctionRecommendation:
     valuation: PlayerValuation
     value: float  # inflation-adjusted worth to you, in dollars
     par: float  # pre-draft par value, before inflation
-    market: float | None  # what the room typically pays
+    market: float | None  # what this room will pay: sheet price x the live room premium
     surplus: float | None  # value - market; the auction analog of VONA
     max_bid: int  # hard ceiling from your remaining budget and slots
     affordable: bool
     depth_factor: float
     score: float
     reason: str
+    # True when the market price was interpolated rather than published by a source.
+    market_estimated: bool
+    # Softer ceiling than max_bid: what you can pay and still fill your remaining
+    # *starter* slots at realistic prices, not $1 apiece.
+    smart_cap: int
 
     @property
     def name(self) -> str:
@@ -163,8 +349,9 @@ class AuctionRecommendation:
 
     @property
     def bid_to(self) -> int:
-        """The most you should actually bid: your worth for him, capped by what you can pay."""
-        return int(min(self.max_bid, round(self.value)))
+        """The most you should actually bid: your worth, capped by what you can pay while
+        still fielding a real lineup."""
+        return int(min(self.max_bid, self.smart_cap, round(self.value)))
 
 
 def recommend_auction(
@@ -177,27 +364,120 @@ def recommend_auction(
     money_remaining: int,
     slots_remaining: int,
     my_max_bid: int,
+    my_budget_remaining: int | None = None,
+    league_position_counts: dict[str, int] | None = None,
+    sales: list[Sale] | None = None,
     limit: int = 8,
 ) -> list[AuctionRecommendation]:
-    """Rank the remaining players by where your dollars go furthest."""
+    """Rank the remaining players by where your dollars go furthest.
+
+    ``sales`` feeds the live room premium, ``league_position_counts`` (positions rostered
+    across the whole league) sizes the competition for remaining starters, and
+    ``my_budget_remaining`` enables the smart cap. All three are optional: without them
+    the model degrades to sheet prices and the $1-per-slot hard ceiling.
+    """
     inflation = inflation_factor(
         available,
         values,
         money_remaining=money_remaining,
         slots_remaining=slots_remaining,
     )
+    premiums = room_premiums(sales) if sales else RoomPremiums()
+    estimated_markets = _estimate_markets(available, values)
+
+    # Worth and calibrated expected price for the whole pool, before any ranking: the
+    # budget reservations below need prices for players that may never be recommended.
+    adjusted_of: dict[str, float] = {}
+    expected_of: dict[str, float | None] = {}
+    for valuation in available:
+        key = valuation.player_key
+        par = values.value_of(key)
+        adjusted_of[key] = MIN_BID + (par - MIN_BID) * inflation
+        base = valuation.market_cost
+        if base is None:
+            base = estimated_markets.get(key)
+        expected_of[key] = base * premiums.at(valuation.position) if base is not None else None
+
+    open_dedicated, open_flex, backups = _assign_lineup(roster_counts, settings)
+
+    def factor_for(position: str) -> float:
+        if open_dedicated.get(position, 0) > 0:
+            return 1.0
+        if any(position in eligible and count > 0 for eligible, count in open_flex):
+            return 1.0
+        return depth_multiplier(backups.get(position, 0) + 1, 1)
+
+    # -- budget reservation: what filling each of my remaining slots will really cost.
+    # A starter slot reserves the going rate of the player I could realistically end up
+    # with (the k-th best remaining, because k other open league slots compete for the
+    # cheap ones); a bench slot reserves the $1 minimum, as the hard max_bid already does.
+    by_position: dict[str, list[PlayerValuation]] = {}
+    for valuation in available:
+        by_position.setdefault(valuation.position, []).append(valuation)
+    for pool in by_position.values():
+        pool.sort(key=lambda v: -adjusted_of[v.player_key])
+
+    league_counts = league_position_counts or {}
+
+    def slot_price(position: str) -> float:
+        pool = by_position.get(position)
+        if not pool:
+            return float(MIN_BID)
+        demand = max(1, levels.starters_drafted.get(position, 0) - league_counts.get(position, 0))
+        chosen = pool[min(demand - 1, len(pool) - 1)]
+        price = expected_of.get(chosen.player_key)
+        if price is None:
+            price = adjusted_of[chosen.player_key]
+        return max(float(MIN_BID), price)
+
+    slot_prices = {position: slot_price(position) for position in by_position}
+    flex_prices = [
+        min((slot_prices.get(p, float(MIN_BID)) for p in eligible), default=float(MIN_BID))
+        for eligible, _ in open_flex
+    ]
+
+    starter_reserved = sum(
+        slot_prices.get(position, float(MIN_BID)) * count
+        for position, count in open_dedicated.items()
+    ) + sum(price * count for price, (_, count) in zip(flex_prices, open_flex, strict=True))
+    starter_slots_open = sum(open_dedicated.values()) + sum(count for _, count in open_flex)
+    my_open_slots = max(0, (settings.roster_size or 0) - sum(roster_counts.values()))
+    bench_open = max(0, my_open_slots - starter_slots_open)
+    total_reserved = starter_reserved + bench_open * MIN_BID
+
+    def smart_cap_for(position: str) -> int:
+        if my_budget_remaining is None:
+            return my_max_bid
+        # The candidate himself fills one open slot, so its reservation is released.
+        if open_dedicated.get(position, 0) > 0:
+            released = slot_prices.get(position, float(MIN_BID))
+        else:
+            flex_hits = [
+                price
+                for price, (eligible, count) in zip(flex_prices, open_flex, strict=True)
+                if position in eligible and count > 0
+            ]
+            if flex_hits:
+                released = flex_hits[0]
+            elif bench_open > 0:
+                released = float(MIN_BID)
+            else:
+                released = 0.0
+        spendable = my_budget_remaining - (total_reserved - released)
+        return max(0, min(my_max_bid, int(spendable)))
 
     recommendations: list[AuctionRecommendation] = []
     for valuation in available:
-        par = values.value_of(valuation.player_key)
-        adjusted = MIN_BID + (par - MIN_BID) * inflation
+        key = valuation.player_key
+        par = values.value_of(key)
+        adjusted = adjusted_of[key]
 
-        market = valuation.market_cost
+        market = expected_of[key]
+        market_estimated = valuation.market_cost is None and market is not None
         surplus = (adjusted - market) if market is not None else None
 
-        starters = max(1, settings.starters_at(valuation.position))
+        need = factor_for(valuation.position)
         held = roster_counts.get(valuation.position, 0)
-        depth = depth_multiplier(held, starters)
 
         # You cannot win a player whose going rate is above your ceiling, however much you
         # like him. Rank those below everyone you can actually buy.
@@ -206,11 +486,13 @@ def recommend_auction(
 
         # Blend mispricing against raw worth. Chasing surplus alone builds a roster of
         # cheap sleepers and no studs; chasing worth alone means overpaying at market.
-        score = (0.6 * (surplus if surplus is not None else 0.0) + 0.4 * adjusted) * depth
+        score = penalized(0.6 * (surplus if surplus is not None else 0.0) + 0.4 * adjusted, need)
         if valuation.is_injured:
-            score *= 0.5
+            score = penalized(score, 0.5)
         if not affordable:
             score -= 1000.0  # sorts below every attainable player without losing order
+
+        smart_cap = smart_cap_for(valuation.position)
 
         recommendations.append(
             AuctionRecommendation(
@@ -221,20 +503,24 @@ def recommend_auction(
                 surplus=surplus,
                 max_bid=my_max_bid,
                 affordable=affordable,
-                depth_factor=depth,
+                depth_factor=need,
                 score=score,
+                market_estimated=market_estimated,
+                smart_cap=smart_cap,
                 reason=_explain(
                     valuation,
                     adjusted,
                     market,
                     surplus,
                     inflation,
-                    depth,
+                    premiums,
+                    need,
                     held,
-                    starters,
                     affordable,
                     my_max_bid,
                     expected_price,
+                    market_estimated,
+                    smart_cap,
                 ),
             )
         )
@@ -249,18 +535,21 @@ def _explain(
     market: float | None,
     surplus: float | None,
     inflation: float,
-    depth: float,
+    premiums: RoomPremiums,
+    need: float,
     held: int,
-    starters: int,
     affordable: bool,
     my_max_bid: int,
     expected_price: float,
+    market_estimated: bool,
+    smart_cap: int,
 ) -> str:
     parts: list[str] = []
 
     if not affordable:
-        # market can be absent (Yahoo publishes no auction cost for deep players), in
-        # which case our own valuation is the best estimate of what he will go for.
+        # market can be absent (Yahoo publishes no auction cost for deep players and no
+        # priced neighbor may exist to interpolate from), in which case our own valuation
+        # is the best estimate of what he will go for.
         basis = "goes for about" if market is not None else "worth about"
         parts.append(f"{basis} ${expected_price:.0f}, above your ${my_max_bid} ceiling")
     elif surplus is not None and surplus >= 5:
@@ -270,18 +559,27 @@ def _explain(
     else:
         parts.append(f"worth about ${adjusted:.0f}")
 
+    premium = premiums.at(valuation.position)
+    if premium >= 1.15 or premium <= 0.85:
+        parts.append(f"room paying {premium:.0%} of sheet at {valuation.position}")
+
     if inflation >= 1.15:
         parts.append(f"prices running {inflation:.0%} of par")
     elif inflation <= 0.85:
         parts.append(f"bargains available, prices at {inflation:.0%} of par")
 
+    if affordable and smart_cap < my_max_bid and smart_cap < round(adjusted):
+        parts.append(f"cap ${smart_cap} to keep real money for your open starters")
+
     if valuation.tier is not None:
         parts.append(f"tier {valuation.tier}")
-    if depth < 1.0:
-        parts.append(f"you hold {held} at {valuation.position} (start {starters})")
+    if need < 1.0:
+        parts.append(f"no open slot for him; you hold {held} at {valuation.position}")
     if valuation.is_injured:
         parts.append(f"injury status {valuation.status}")
     if valuation.points_estimated:
         parts.append("projection interpolated")
+    if market_estimated:
+        parts.append("market est.")
 
     return "; ".join(parts)

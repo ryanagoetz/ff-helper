@@ -67,6 +67,8 @@ def _serialize(pick, is_auction: bool) -> dict:
                 "market": round(pick.market, 1) if pick.market is not None else None,
                 "surplus": round(pick.surplus, 1) if pick.surplus is not None else None,
                 "bid_to": pick.bid_to,
+                "smart_cap": pick.smart_cap,
+                "market_estimated": pick.market_estimated,
                 "affordable": pick.affordable,
             }
         )

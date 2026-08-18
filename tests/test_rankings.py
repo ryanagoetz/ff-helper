@@ -269,3 +269,31 @@ class TestBlend:
         grouped, _ = registry.crosswalk(self._rows())
         result = blend(registry, grouped, league_settings)
         assert result.valuations["461.p.2"].tier == 4
+
+    def test_yahoo_auction_costs_scale_with_the_league_budget(self, registry, league_settings):
+        rows = [
+            SourceRow(
+                name="Kenneth Walker III",
+                position="RB",
+                team="Sea",
+                source="yahoo",
+                auction_cost=40.0,
+            ),
+            SourceRow(
+                name="Ja'Marr Chase", position="WR", team="Cin", source="csv", auction_cost=40.0
+            ),
+        ]
+        grouped, _ = registry.crosswalk(rows)
+        rich = LeagueSettings(
+            roster_slots=league_settings.roster_slots,
+            stat_modifiers=league_settings.stat_modifiers,
+            is_auction=True,
+            auction_budget=300,
+        )
+        result = blend(registry, grouped, rich)
+
+        # Yahoo's average_cost is measured across default $200 rooms, so in a $300
+        # league the same player's going rate is half again higher.
+        assert result.valuations["461.p.2"].market_cost == pytest.approx(60.0)
+        # A CSV cost is the user's own export for this league and is left alone.
+        assert result.valuations["461.p.1"].market_cost == pytest.approx(40.0)
