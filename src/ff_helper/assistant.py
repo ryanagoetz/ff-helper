@@ -11,6 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+from ff_helper import config
 from ff_helper.draft.state import DraftState
 from ff_helper.engine import lineup, replacement
 from ff_helper.engine.auction import (
@@ -23,6 +24,7 @@ from ff_helper.engine.auction import (
 )
 from ff_helper.engine.replacement import ReplacementLevels
 from ff_helper.engine.room import observations_from_board, room_tendencies
+from ff_helper.engine.simulate import SimulationConfig, SimulationResult, simulate_market
 from ff_helper.engine.vona import Recommendation, recommend
 from ff_helper.rankings.blend import BlendResult, PlayerValuation, blend
 from ff_helper.rankings.cache import Snapshot
@@ -46,6 +48,9 @@ class Assistant:
     # buyer can still be resolved. A buyer we cannot resolve costs more than a player we
     # cannot resolve: the money never leaves the room and every price is overstated.
     team_aliases: dict[str, str] = field(default_factory=dict)
+    # Monte Carlo rollouts per snake recommendation; 0 keeps the analytic model alone.
+    # ``build`` reads FF_MC_ROLLOUTS; tests and scripts may set it directly.
+    mc_rollouts: int = 0
 
     @property
     def is_auction(self) -> bool:
@@ -144,6 +149,7 @@ class Assistant:
             lock=lock or threading.Lock(),
             notes=notes,
             dollars=dollars,
+            mc_rollouts=config.mc_rollouts(),
         )
 
     # -- views -------------------------------------------------------------------------
@@ -201,8 +207,41 @@ class Assistant:
                 observations_from_board(self.state.board.values(), self.valuations.valuations)
             )
 
+            # Inputs the market simulator needs are copied under the lock; the
+            # simulation itself runs outside it, like ``recommend`` below -- both are
+            # pure functions of the copies, and neither should block the poller.
+            market_inputs = None
+            if self.mc_rollouts > 0:
+                sim_targets = sorted(
+                    {p for p in [next_pick, *future_picks] if p is not None and p > current}
+                )
+                if sim_targets:
+                    market_inputs = (
+                        sim_targets,
+                        *self._market_inputs(current, sim_targets, position_of),
+                    )
+
         if self.league.settings is None or not available:
             return []
+
+        market: SimulationResult | None = None
+        if market_inputs is not None:
+            sim_targets, pick_owner, team_rosters = market_inputs
+            try:
+                market = simulate_market(
+                    available,
+                    self.levels,
+                    self.league.settings,
+                    current_pick=current,
+                    my_picks=all_my_picks,
+                    targets=sim_targets,
+                    pick_owner=pick_owner,
+                    team_rosters=team_rosters,
+                    tendencies=tendencies,
+                    config=SimulationConfig(rollouts=self.mc_rollouts),
+                )
+            except Exception:  # noqa: BLE001 -- advice must survive a simulator bug
+                market = None
 
         return recommend(
             available,
@@ -216,8 +255,32 @@ class Assistant:
             my_picks=all_my_picks,
             tendencies=tendencies,
             num_teams=self.state.num_teams,
+            market=market,
             limit=limit,
         )
+
+    def _market_inputs(
+        self,
+        current: int,
+        targets: list[int],
+        position_of: dict[str, str],
+    ) -> tuple[dict[int, str], dict[str, dict[str, int]]]:
+        """Pick ownership and every team's roster counts, for the market simulator.
+
+        Caller must hold the lock: both come off the live board. Picks past the end of
+        the draft (or before Yahoo publishes the order) simply have no owner, and the
+        simulator drafts them with a generic team that needs everything.
+        """
+        pick_owner: dict[int, str] = {}
+        for number in range(current, max(targets)):
+            team = self.state.team_for_pick(number)
+            if team is not None:
+                pick_owner[number] = team.team_key
+        team_rosters = {
+            team.team_key: self.state.roster_counts(team.team_key, position_of)
+            for team in self.state.teams
+        }
+        return pick_owner, team_rosters
 
     def _position_demand(
         self,

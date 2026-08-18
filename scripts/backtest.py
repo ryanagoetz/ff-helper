@@ -33,6 +33,7 @@ from ff_helper.rankings.cache import Snapshot  # noqa: E402
 
 PREDICTORS: dict[str, calibration.Predictor] = {
     "analytic": calibration.analytic_predictor,
+    "mc": calibration.mc_predictor,
 }
 
 

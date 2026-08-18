@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ff_helper.engine.lineup import assign_lineup
 from ff_helper.engine.lineup import depth_multiplier as depth_multiplier
@@ -34,6 +35,11 @@ from ff_helper.engine.replacement import ReplacementLevels
 from ff_helper.engine.room import RoomTendencies
 from ff_helper.rankings.blend import PlayerValuation
 from ff_helper.yahoo.models import LeagueSettings
+
+if TYPE_CHECKING:
+    # Type-only: simulate.py imports this module's constants at runtime, so importing it
+    # back here for real would be a cycle.
+    from ff_helper.engine.simulate import SimulationResult
 
 # Below this, a survival probability is treated as zero to keep the conditioning stable.
 _EPSILON = 1e-6
@@ -321,6 +327,7 @@ def recommend(
     my_picks: list[int] | None = None,
     tendencies: RoomTendencies | None = None,
     num_teams: int | None = None,
+    market: SimulationResult | None = None,
     limit: int = 8,
 ) -> list[Recommendation]:
     """Rank the available players by the best draft you can still have.
@@ -339,6 +346,13 @@ def recommend(
     count how many intervening picks are actually opponents'; when absent, the current
     pick is assumed mine (the way the pure-function tests call this). ``tendencies`` is
     this room's learned drift from ADP (``room.room_tendencies``); absent means neutral.
+
+    ``market`` is an optional Monte Carlo simulation of the same window
+    (``simulate.simulate_market``). When it can answer a question -- an expected-best
+    value at a simulated target, a survival at the horizon -- its answer wins, because
+    it prices the correlations the analytic model assumes away; everything it cannot
+    answer falls back to the analytic model. The plan DP is untouched either way: the
+    market fixes the *marginals*, the DP keeps the assignment exact.
     """
     by_position: dict[str, list[PlayerValuation]] = {}
     for valuation in available:
@@ -409,19 +423,22 @@ def recommend(
     def expected_at(position: str, rank: int, pick: int, exclude: str | None) -> float:
         key = (position, rank, pick, exclude)
         if key not in e_cache:
-            pool = by_position.get(position, [])
-            if exclude is not None:
-                pool = [c for c in pool if c.player_key != exclude]
-            e_cache[key] = expected_best_available(
-                pool,
-                levels,
-                current_pick=current_pick,
-                target_pick=pick,
-                demand=demand_at(pick, position),
-                adp_shift=shift_of(position),
-                normalizer=normalizers.get(pick, 1.0),
-                rank=rank,
-            )
+            value = None if market is None else market.expected_at(position, rank, pick, exclude)
+            if value is None:
+                pool = by_position.get(position, [])
+                if exclude is not None:
+                    pool = [c for c in pool if c.player_key != exclude]
+                value = expected_best_available(
+                    pool,
+                    levels,
+                    current_pick=current_pick,
+                    target_pick=pick,
+                    demand=demand_at(pick, position),
+                    adp_shift=shift_of(position),
+                    normalizer=normalizers.get(pick, 1.0),
+                    rank=rank,
+                )
+            e_cache[key] = value
         return e_cache[key]
 
     # Positions the plan can route more than one slot to need their assignment count in
@@ -488,6 +505,9 @@ def recommend(
         return result
 
     recommendations: list[Recommendation] = []
+    # One tail note per position, computed lazily: the wipeout is a fact about the
+    # position's tier, not about any one candidate.
+    tail_notes: dict[str, str] = {}
     for valuation in available:
         position = valuation.position
         vor = levels.vor(valuation)
@@ -523,14 +543,16 @@ def recommend(
         # *behind* him, not his own habit of surviving. (His own survival is reported
         # separately -- the two argue for opposite actions.)
         vona = vor - expected_at(position, 1, horizon, exclude)
-        survival = survival_probability(
-            valuation,
-            current_pick=current_pick,
-            target_pick=horizon,
-            demand=demand_at(horizon, position),
-            adp_shift=shift_of(position),
-            normalizer=normalizers.get(horizon, 1.0),
-        )
+        survival = None if market is None else market.survival(valuation.player_key, horizon)
+        if survival is None:
+            survival = survival_probability(
+                valuation,
+                current_pick=current_pick,
+                target_pick=horizon,
+                demand=demand_at(horizon, position),
+                adp_shift=shift_of(position),
+                normalizer=normalizers.get(horizon, 1.0),
+            )
 
         own = penalized(vor, factor)
         if valuation.is_injured:
@@ -558,6 +580,9 @@ def recommend(
                     horizon,
                     demand_at(horizon, position),
                     _wait_note(position, needs, futures, by_position, expected_at),
+                    tail_notes.setdefault(
+                        position, market.tail_note(position) if market is not None else ""
+                    ),
                 ),
             )
         )
@@ -601,6 +626,7 @@ def _explain(
     horizon: int,
     demand: float,
     wait_note: str,
+    tail_note: str = "",
 ) -> str:
     """A one-line, human-checkable reason. You are the one making the pick."""
     gone = 1.0 - survival
@@ -630,6 +656,8 @@ def _explain(
 
     if wait_note:
         parts.append(wait_note)
+    if tail_note:
+        parts.append(tail_note)
 
     if valuation.tier is not None:
         parts.append(f"tier {valuation.tier}")

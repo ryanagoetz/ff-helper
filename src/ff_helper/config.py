@@ -61,6 +61,17 @@ def cache_dir() -> Path:
     return path
 
 
+def mc_rollouts() -> int:
+    """Monte Carlo rollouts per snake recommendation (FF_MC_ROLLOUTS). 0 disables it.
+
+    Off by default on purpose: the simulator stays opt-in until backtests show it beats
+    the analytic survival model on calibration and counterfactual rosters. Read at
+    ``Assistant.build`` time rather than through ``Settings`` so every entry point --
+    web app, replay, backtest -- honors the same switch without new plumbing.
+    """
+    return _optional_int(os.environ.get("FF_MC_ROLLOUTS")) or 0
+
+
 @dataclass(frozen=True)
 class Settings:
     client_id: str

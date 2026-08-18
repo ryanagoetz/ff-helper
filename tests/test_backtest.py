@@ -134,6 +134,21 @@ class TestCalibration:
         assert first_predicted < last_predicted
         assert first_observed < last_observed
 
+    def test_mc_predictor_is_also_calibrated_in_an_adp_world(self, world):
+        # The Monte Carlo predictor scored on the same record, through the same
+        # harness -- the A/B this Predictor parameter exists for. Rollouts kept small:
+        # this asserts sanity, not the analytic-vs-mc verdict (backtest.py does that).
+        from ff_helper.backtest.calibration import mc_predictor
+
+        record, _ = world
+        assistant = fresh_assistant(record)
+        assistant.mc_rollouts = 40
+        report = survival_calibration(
+            assistant, list(record.picks), predictor=mc_predictor
+        )
+        assert report.n > 500
+        assert 0.0 < report.brier < 0.25
+
     def test_my_own_removals_are_not_scored(self, world):
         record, _ = world
         report = survival_calibration(fresh_assistant(record), list(record.picks))

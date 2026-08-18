@@ -24,6 +24,7 @@ from typing import Protocol
 
 from ff_helper.assistant import Assistant
 from ff_helper.engine.room import observations_from_board, room_tendencies
+from ff_helper.engine.simulate import SimulationConfig, simulate_market
 from ff_helper.engine.vona import survival_normalizers, survival_probability
 from ff_helper.rankings.blend import PlayerValuation
 from ff_helper.yahoo.models import DraftPick
@@ -73,6 +74,51 @@ def analytic_predictor(
     )
     beta = normalizers[target_pick]
     return {key: survival**beta for key, survival in raw.items()}
+
+
+def mc_predictor(
+    assistant: Assistant,
+    available: list[PlayerValuation],
+    current_pick: int,
+    target_pick: int,
+) -> dict[str, float]:
+    """Survival counted from Monte Carlo rollouts of the window.
+
+    Rollouts come from the assistant's ``mc_rollouts`` when set; otherwise 300 -- this
+    predictor only runs when explicitly requested, so "disabled" would be a strange
+    answer. Anything the simulation cannot cover falls back to the analytic model.
+    """
+    settings = assistant.league.settings
+    if settings is None:
+        return analytic_predictor(assistant, available, current_pick, target_pick)
+    pick_owner, team_rosters = assistant._market_inputs(
+        current_pick, [target_pick], assistant.position_of
+    )
+    tendencies = room_tendencies(
+        observations_from_board(assistant.state.board.values(), assistant.valuations.valuations)
+    )
+    market = simulate_market(
+        available,
+        assistant.levels,
+        settings,
+        current_pick=current_pick,
+        my_picks=list(assistant.state.my_picks),
+        targets=[target_pick],
+        pick_owner=pick_owner,
+        team_rosters=team_rosters,
+        tendencies=tendencies,
+        config=SimulationConfig(rollouts=assistant.mc_rollouts or 300),
+    )
+    fallback: dict[str, float] | None = None
+    predictions: dict[str, float] = {}
+    for valuation in available:
+        survival = market.survival(valuation.player_key, target_pick)
+        if survival is None:
+            if fallback is None:
+                fallback = analytic_predictor(assistant, available, current_pick, target_pick)
+            survival = fallback[valuation.player_key]
+        predictions[valuation.player_key] = survival
+    return predictions
 
 
 @dataclass(frozen=True)
