@@ -640,6 +640,35 @@ class TestPlanScoring:
             if pick.plan_bid is not None:
                 assert pick.bid_to <= pick.plan_bid
 
+    def test_no_market_pool_ranks_by_worth_and_keeps_plan_bids(self):
+        # An offline pool with no auction cost from any source: every price estimate is
+        # my own value, so the plan marginal is identically ~zero for everyone and
+        # cannot rank. Worth must rank instead (a mush board buried Gibbs under $20
+        # players before this), while plan_bid still says where buying stops beating
+        # the rest of the plan.
+        levels = ReplacementLevels(points={}, starters_drafted={"QB": 12, "RB": 30})
+        stud = player("Stud RB", "RB", 250, adp=1)
+        mid = player("Mid RB", "RB", 180, adp=30)
+        punt = player("Punt RB", "RB", 120, adp=90)
+        values = dollar_values(
+            {stud.player_key: 60.0, mid.player_key: 25.0, punt.player_key: 3.0}
+        )
+        picks = recommend_auction(
+            [mid, punt, stud],  # deliberately not value-ordered
+            levels,
+            values,
+            engine_settings(),
+            {},
+            money_remaining=88,  # 3 slots' minimums + the pool's $85 par surplus
+            slots_remaining=3,
+            my_max_bid=100,
+            my_budget_remaining=100,
+            limit=3,
+        )
+        assert [pick.name for pick in picks] == ["Stud RB", "Mid RB", "Punt RB"]
+        assert all(pick.plan_bid is not None for pick in picks)
+        assert all(pick.market is None for pick in picks)
+
     def test_degraded_mode_reproduces_the_blend(self):
         levels = ReplacementLevels(points={}, starters_drafted={"QB": 12, "RB": 30})
         rb = replace(player("Steady RB", "RB", 150, adp=30), market_cost=20.0)

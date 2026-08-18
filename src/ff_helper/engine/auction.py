@@ -280,16 +280,21 @@ def _price_ladder(
 ) -> list[tuple[int, float]]:
     """The realistic ways to fund one slot at this position: (price, my value) rungs.
 
-    ``pool`` is the position's remaining players, best first by adjusted value;
-    ``demand_index`` points at the one the league's remaining demand leaves me (what
-    ``slot_price`` reserves). The rungs below it are progressively deeper punts, down to
-    the last man standing at $1. The point is not price precision but *choice*: a plan
-    can decide how deep to punt each position, which a single reserved price cannot say.
+    ``pool`` is the position's remaining players, best first by adjusted value. The top
+    rung is the best player left at his going rate -- paying up is always one of the
+    choices, which is exactly what ``slot_price``'s reservation cannot express. Below it
+    sit the settle rungs around ``demand_index`` (the player the league's remaining
+    demand realistically leaves me if I *don't* pay up -- what ``slot_price`` reserves)
+    and the last man standing at $1. The point is not price precision but *choice*: a
+    plan decides per slot whether to pay up, settle, or punt, and two same-position
+    slots sharing the top rung is an accepted approximation -- ladders choose depth,
+    not individual players.
     """
     if not pool:
         return []
     indices = sorted(
-        {min(demand_index + offset, len(pool) - 1) for offset in _LADDER_OFFSETS}
+        {0}
+        | {min(demand_index + offset, len(pool) - 1) for offset in _LADDER_OFFSETS}
         | {len(pool) - 1}
     )
     ladder: list[tuple[int, float]] = []
@@ -611,19 +616,26 @@ def recommend_auction(
         expected_price = market if market is not None else adjusted
         affordable = expected_price <= my_max_bid
 
-        if plan_mode:
+        if plan_mode and market is not None:
             # His value plus the plan with him bought, against the plan without him.
             price_paid = max(MIN_BID, round(expected_price))
             marginal = adjusted + plan_after(valuation.position, price_paid) - base_plan
             score = penalized(marginal, need)
-            plan_bid_of[key] = plan_bid_for(valuation.position, adjusted)
         else:
-            # Degraded mode -- my own budget is unknown, so no plan can be priced. Blend
-            # mispricing against raw worth: chasing surplus alone builds a roster of
-            # cheap sleepers and no studs; chasing worth alone means overpaying.
+            # Blend mispricing against raw worth: chasing surplus alone builds a roster
+            # of cheap sleepers and no studs; chasing worth alone means overpaying.
+            # This is the whole score when my budget is unknown (no plan can be priced),
+            # and it also carries any player with no market signal at all -- his only
+            # price estimate is my own value, which makes the plan marginal identically
+            # ~zero and worth the only ranking signal left.
             score = penalized(
                 0.6 * (surplus if surplus is not None else 0.0) + 0.4 * adjusted, need
             )
+        if plan_mode:
+            # The break-even bid stands either way: even without a market to rank
+            # against, "the price where buying him stops beating the rest of the plan"
+            # is exactly what to stop bidding at.
+            plan_bid_of[key] = plan_bid_for(valuation.position, adjusted)
         if valuation.is_injured:
             score = penalized(score, _INJURY_RESIDUAL)
 
