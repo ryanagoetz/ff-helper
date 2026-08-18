@@ -5,12 +5,19 @@ from __future__ import annotations
 import pytest
 
 from ff_helper.engine import replacement
+from ff_helper.engine.room import (
+    PickObservation,
+    observations_from_board,
+    room_tendencies,
+)
 from ff_helper.engine.scoring import score_stats, scoring_slug
 from ff_helper.engine.vona import (
     depth_multiplier,
     expected_best_available,
+    extrapolated_picks,
     penalized,
     recommend,
+    survival_normalizers,
     survival_probability,
     survival_probability_at,
 )
@@ -205,6 +212,143 @@ class TestExpectedBestAvailable:
         assert second == pytest.approx(20, abs=3)
 
 
+class TestRoomTendencies:
+    """The snake analog of the auction room premiums: learned drift from ADP."""
+
+    def test_empty_board_reports_neutral(self):
+        tendencies = room_tendencies([])
+        assert tendencies.overall == 0.0
+        assert tendencies.shift("RB") == 0.0
+
+    def test_uniformly_slow_room_shifts_positive_but_shrunk(self):
+        # Thirty picks each 8 later than ADP: a real tendency, but the prior keeps the
+        # estimate below the raw mean and the clamp keeps it sane.
+        observations = [PickObservation("WR", 8.0) for _ in range(30)]
+        tendencies = room_tendencies(observations)
+        assert 0.0 < tendencies.overall < 8.0
+        assert tendencies.overall <= 10.0
+
+    def test_positional_reach_is_shrunk_toward_the_room(self):
+        # Two quarterbacks taken 20 picks early among thirty neutral picks: the QB
+        # shift goes negative, but two picks are an anecdote, not a rewrite.
+        observations = [PickObservation("RB", 0.0) for _ in range(30)] + [
+            PickObservation("QB", -20.0),
+            PickObservation("QB", -20.0),
+        ]
+        tendencies = room_tendencies(observations)
+        assert tendencies.shift("QB") < tendencies.overall
+        assert tendencies.shift("QB") > -20.0
+        # Positions with no picks fall back to the room-wide tendency.
+        assert tendencies.shift("TE") == tendencies.overall
+
+    def test_one_faller_is_not_a_tendency(self):
+        # A single 60-pick slide contributes at most the observation clamp.
+        lone = room_tendencies([PickObservation("WR", 60.0)])
+        capped = room_tendencies([PickObservation("WR", 25.0)])
+        assert lone.overall == capped.overall
+
+    def test_positive_shift_raises_survival(self):
+        target = player("Target", "RB", 150, adp=20, stdev=5)
+        base = survival_probability(target, current_pick=10, target_pick=20)
+        slow_room = survival_probability(
+            target, current_pick=10, target_pick=20, adp_shift=6.0
+        )
+        assert slow_room > base
+
+    def test_observations_skip_players_the_blend_guessed_at(self):
+        from dataclasses import replace
+
+        from ff_helper.yahoo.models import DraftPick
+
+        known = player("Known", "RB", 150, adp=10)
+        guessed = replace(player("Guessed", "WR", 80, adp=200), adp_estimated=True)
+        valuations = {v.player_key: v for v in (known, guessed)}
+        picks = [
+            DraftPick(pick=12, round=1, team_key="t.1", player_key=known.player_key),
+            DraftPick(pick=13, round=2, team_key="t.2", player_key=guessed.player_key),
+            DraftPick(pick=14, round=2, team_key="t.3", player_key="unknown.player"),
+        ]
+        observations = observations_from_board(picks, valuations)
+        assert len(observations) == 1
+        assert observations[0].position == "RB"
+        assert observations[0].deviation == pytest.approx(2.0)
+
+
+class TestNormalization:
+    """The pick-budget constraint: between two of my turns, exactly as many players
+    leave the board as there are opponent picks -- no matter what independent hazards
+    would prefer."""
+
+    def test_solved_exponent_balances_the_budget(self):
+        pool = [player(f"P{i}", "WR", 150 - i, adp=10 + i * 2, stdev=6) for i in range(40)]
+        survivals = [
+            survival_probability(v, current_pick=20, target_pick=33) for v in pool
+        ]
+        beta = survival_normalizers({33: survivals}, current_pick=20, my_picks=[20, 33])[33]
+        # Window 20..32 is 13 picks; one (20) is mine, so opponents remove 12.
+        assert sum(1 - s**beta for s in survivals) == pytest.approx(12, abs=0.05)
+
+    def test_deep_position_is_not_over_drained(self):
+        # Thirty near-identical RBs and a four-opponent window: independent hazards
+        # would remove far more than four of them, making the expected best-available
+        # look bleak and the position look artificially urgent.
+        levels = replacement.ReplacementLevels(points={"RB": 50.0}, starters_drafted={"RB": 30})
+        pool = [player(f"RB{i}", "RB", 150 - i, adp=18 + i, stdev=8) for i in range(30)]
+        survivals = [
+            survival_probability(v, current_pick=20, target_pick=25) for v in pool
+        ]
+        assert sum(1 - s for s in survivals) > 4  # the raw model overdraws
+        beta = survival_normalizers({25: survivals}, current_pick=20, my_picks=[20, 25])[25]
+        assert beta < 1.0
+        raw = expected_best_available(pool, levels, current_pick=20, target_pick=25)
+        normalized = expected_best_available(
+            pool, levels, current_pick=20, target_pick=25, normalizer=beta
+        )
+        assert normalized > raw
+
+    def test_quiet_demand_pushes_hazard_onto_other_positions(self):
+        # The old model could only ever shrink hazards: flooring QB demand made
+        # quarterbacks safer without making anyone else less safe, which is impossible
+        # when the pick count is fixed. Through the normalizer the displaced removals
+        # land on the receivers.
+        wrs = [player(f"WR{i}", "WR", 150 - i, adp=15 + i * 2, stdev=6) for i in range(15)]
+        qbs = [player(f"QB{i}", "QB", 250 - i, adp=16 + i * 2, stdev=6) for i in range(15)]
+
+        def beta_when_qb_demand_is(demand: float) -> float:
+            survivals = [
+                survival_probability(v, current_pick=14, target_pick=26) for v in wrs
+            ] + [
+                survival_probability(v, current_pick=14, target_pick=26, demand=demand)
+                for v in qbs
+            ]
+            return survival_normalizers({26: survivals}, current_pick=14, my_picks=[14, 26])[26]
+
+        neutral = beta_when_qb_demand_is(1.0)
+        quiet = beta_when_qb_demand_is(0.0)
+        assert quiet > neutral
+        wr_survival = survival_probability(wrs[0], current_pick=14, target_pick=26)
+        assert wr_survival**quiet < wr_survival**neutral
+
+    def test_my_own_picks_are_not_opponent_removals(self):
+        pool = [player(f"P{i}", "WR", 150 - i, adp=10 + i * 2, stdev=6) for i in range(40)]
+        survivals = [
+            survival_probability(v, current_pick=20, target_pick=33) for v in pool
+        ]
+        two_of_mine = survival_normalizers(
+            {33: survivals}, current_pick=20, my_picks=[20, 26, 33]
+        )[33]
+        one_of_mine = survival_normalizers({33: survivals}, current_pick=20, my_picks=[20, 33])[33]
+        # An extra pick of mine inside the window means one fewer opponent removal, so
+        # the exponent eases and everyone's survival rises.
+        assert two_of_mine < one_of_mine
+
+    def test_default_normalizer_changes_nothing(self):
+        target = player("Target", "RB", 150, adp=20, stdev=5)
+        assert survival_probability(
+            target, current_pick=10, target_pick=20, normalizer=1.0
+        ) == survival_probability(target, current_pick=10, target_pick=20)
+
+
 class TestDepthMultiplier:
     def test_full_value_until_starters_are_filled(self):
         assert depth_multiplier(0, 1) == 1.0
@@ -237,10 +381,11 @@ class TestRecommend:
         should take the RB.
         """
         levels = replacement.ReplacementLevels(
-            points={"RB": 100.0, "WR": 100.0}, starters_drafted={"RB": 30, "WR": 36}
+            points={"RB": 100.0, "WR": 100.0, "QB": 130.0},
+            starters_drafted={"RB": 30, "WR": 36, "QB": 12},
         )
         available = [
-            player("Elite WR", "WR", 180, adp=13, stdev=4),
+            player("Elite WR", "WR", 175, adp=13, stdev=4),
             # A deep, flat WR corps going well *after* the next pick, so waiting costs
             # little -- at pick 25 and at the picks after it. (If the tier died between
             # my turns, grabbing elite WRs early would genuinely be right: with two WR
@@ -250,6 +395,12 @@ class TestRecommend:
             # happens before the next pick comes back around.
             player("Last good RB", "RB", 170, adp=14, stdev=4),
             *[player(f"RB{i}", "RB", 118 - i * 3, adp=30 + i * 4, stdev=6) for i in range(5)],
+            # A whole board's worth of replacement-level depth behind them. The pick
+            # budget normalizer takes the pool literally -- every intervening pick
+            # removes someone -- so a twelve-player "world" facing ninety removals
+            # (the plan looks eight of my picks ahead) would rightly lose everyone.
+            # These depth players are the rest of that world.
+            *[player(f"Depth QB{i}", "QB", 130, adp=12 + i * 1.3, stdev=5) for i in range(90)],
         ]
 
         picks = recommend(
@@ -393,6 +544,93 @@ class TestRecommend:
         picks = recommend(available, levels, settings(), {}, current_pick=10, next_pick=25)
         names = [pick.name for pick in picks]
         assert names.index("Healthy twin") < names.index("Hurt twin")
+
+    def test_flex_routing_prices_each_position_by_its_own_count(self):
+        """A W/R/T sent to RB behind zero other RB picks is the *first* RB the plan
+        buys, and must be priced at rank 1 -- not at "rank = how many flex slots exist",
+        which is what a precomputed label says. Here the only startable RB left survives
+        to a later pick; the right play is the receiver now and the runner via flex
+        later, which the old fixed-rank plan could not see (it priced the flex-routed
+        RB at rank 2 of a one-man pool: zero)."""
+        flex_settings = LeagueSettings(
+            roster_slots=(
+                RosterSlot("QB", 1),
+                RosterSlot("RB", 2),
+                RosterSlot("WR", 2),
+                RosterSlot("TE", 1),
+                RosterSlot("W/T", 1),
+                RosterSlot("W/R/T", 1),
+                RosterSlot("BN", 5),
+            ),
+            stat_modifiers={},
+            is_auction=False,
+        )
+        levels = replacement.ReplacementLevels(
+            points={"RB": 100.0, "WR": 100.0, "TE": 60.0, "QB": 130.0},
+            starters_drafted={"RB": 30, "WR": 36, "TE": 12, "QB": 12},
+        )
+        available = [
+            player("Balanced WR", "WR", 160, adp=21, stdev=4),
+            player("Stud RB", "RB", 160, adp=70, stdev=8),
+            player("Bad RB", "RB", 90, adp=120, stdev=10),
+            *[player(f"Deep WR{i}", "WR", 150 - i, adp=72 + i * 3, stdev=8) for i in range(6)],
+            player("Decent TE", "TE", 100, adp=75, stdev=8),
+            player("Bad TE", "TE", 55, adp=130, stdev=10),
+            # The rest of the board, absorbing the room's picks (see the scarce-position
+            # test for why the pick budget needs a coherent world).
+            *[player(f"Depth QB{i}", "QB", 130, adp=20 + i, stdev=5) for i in range(36)],
+        ]
+        picks = recommend(
+            available,
+            levels,
+            flex_settings,
+            {"QB": 1, "RB": 2, "WR": 1, "TE": 1},
+            current_pick=20,
+            next_pick=30,
+            future_picks=[30, 40, 50],
+            my_picks=[20, 30, 40, 50],
+        )
+        names = [pick.name for pick in picks]
+        assert names[0] == "Balanced WR"
+        assert names.index("Balanced WR") < names.index("Stud RB")
+
+    def test_extrapolated_picks_mirror_the_snake(self):
+        # Slot 3 of 12: real turns are 3, 22, 27, 46, 51, ... -- gaps alternate 19 and 5.
+        assert extrapolated_picks(3, 22, 12)[:4] == [22, 27, 46, 51]
+        # From the other side of the turn the gaps come in the other order.
+        assert extrapolated_picks(22, 27, 12)[:4] == [27, 46, 51, 70]
+        # Without the team count there is nothing to mirror; the gap repeats.
+        assert extrapolated_picks(3, 22, None)[:3] == [22, 41, 60]
+
+    def test_vona_measures_the_cliff_behind_him_not_his_own_survival(self):
+        levels = replacement.ReplacementLevels(points={"RB": 100.0}, starters_drafted={"RB": 30})
+        available = [
+            player("Stud RB", "RB", 170, adp=60, stdev=8),
+            player("Next RB", "RB", 150, adp=62, stdev=8),
+            player("Cliff RB", "RB", 110, adp=64, stdev=8),
+            *[player(f"Depth RB{i}", "RB", 105 - i, adp=20 + i, stdev=5) for i in range(16)],
+        ]
+        picks = recommend(available, levels, settings(), {}, current_pick=10, next_pick=25)
+        stud = next(pick for pick in picks if pick.name == "Stud RB")
+        # He survives to my next pick almost surely; self-inclusive VONA would call the
+        # position safe (~0) and hide the 20-point gap to the next man.
+        assert stud.survival_to_next > 0.6
+        assert stud.vona > 10
+
+    def test_reason_distinguishes_him_surviving_from_comparables_surviving(self):
+        levels = replacement.ReplacementLevels(points={"RB": 100.0}, starters_drafted={"RB": 30})
+        available = [
+            player("Stud RB", "RB", 170, adp=60, stdev=8),
+            player("Next RB", "RB", 169.5, adp=62, stdev=8),
+            player("Third RB", "RB", 169, adp=64, stdev=8),
+            *[player(f"Depth RB{i}", "RB", 105 - i, adp=20 + i, stdev=5) for i in range(16)],
+        ]
+        picks = recommend(available, levels, settings(), {}, current_pick=10, next_pick=25)
+        stud = next(pick for pick in picks if pick.name == "Stud RB")
+        # A flat tier where he himself survives: the reason should say *he* will still
+        # be there, not that mere comparables will.
+        assert stud.vona <= 1
+        assert "he should still be there" in stud.reason
 
     def test_last_pick_falls_back_to_raw_value(self):
         levels = replacement.ReplacementLevels(

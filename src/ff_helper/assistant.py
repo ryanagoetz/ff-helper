@@ -22,6 +22,7 @@ from ff_helper.engine.auction import (
     recommend_auction,
 )
 from ff_helper.engine.replacement import ReplacementLevels
+from ff_helper.engine.room import observations_from_board, room_tendencies
 from ff_helper.engine.vona import Recommendation, recommend
 from ff_helper.rankings.blend import BlendResult, PlayerValuation, blend
 from ff_helper.rankings.cache import Snapshot
@@ -183,14 +184,22 @@ class Assistant:
             roster = self.state.my_roster_counts(position_of)
             available = self.available()
 
-            # My remaining turns after this one, for the needs-to-picks plan.
-            future_picks = [pick for pick in self.state.my_picks if pick > target]
+            # My remaining turns after this one, for the needs-to-picks plan; the full
+            # list feeds the pick-budget normalizer (my picks are not opponent removals).
+            all_my_picks = list(self.state.my_picks)
+            future_picks = [pick for pick in all_my_picks if pick > target]
 
             # For each future turn: what share of the intervening picks belongs to teams
             # that still need each position as a starter? ADP assumes every room needs
             # everything; this room's rosters say otherwise, and the survival model uses
             # the difference.
             position_demand = self._position_demand(current, future_picks, position_of)
+
+            # What the picks so far say about how this room drifts from ADP -- the snake
+            # analog of the auction engine's live room premiums.
+            tendencies = room_tendencies(
+                observations_from_board(self.state.board.values(), self.valuations.valuations)
+            )
 
         if self.league.settings is None or not available:
             return []
@@ -204,6 +213,9 @@ class Assistant:
             next_pick=next_pick,
             future_picks=future_picks,
             position_demand=position_demand,
+            my_picks=all_my_picks,
+            tendencies=tendencies,
+            num_teams=self.state.num_teams,
             limit=limit,
         )
 
