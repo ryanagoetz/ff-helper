@@ -189,6 +189,7 @@ class Assistant:
             position_of = self.position_of
             roster = self.state.my_roster_counts(position_of)
             available = self.available()
+            roster_byes = self._my_roster_byes()
 
             # My remaining turns after this one, for the needs-to-picks plan; the full
             # list feeds the pick-budget normalizer (my picks are not opponent removals).
@@ -256,8 +257,27 @@ class Assistant:
             tendencies=tendencies,
             num_teams=self.state.num_teams,
             market=market,
+            roster_byes=roster_byes,
             limit=limit,
         )
+
+    def _my_roster_byes(self) -> dict[str, list[int]]:
+        """Bye weeks I already roster, by position, keepers included.
+
+        Caller must hold the lock. Feeds the bye-stack penalty: a second player at a
+        thin position sharing a bye costs a week where that slot scores zero.
+        """
+        team = self.state.my_team
+        if team is None:
+            return {}
+        keys = [pick.player_key for pick in self.state.picks_by_team(team.team_key)]
+        keys += [keeper.player_key for keeper in self.state.keepers_for(team.team_key)]
+        byes: dict[str, list[int]] = {}
+        for key in keys:
+            valuation = self.valuations.valuations.get(key)
+            if valuation is not None and valuation.bye_week is not None:
+                byes.setdefault(valuation.position, []).append(valuation.bye_week)
+        return byes
 
     def _market_inputs(
         self,
@@ -344,6 +364,7 @@ class Assistant:
             position_of = self.position_of
             roster = self.state.my_roster_counts(position_of)
             available = self.available()
+            roster_byes = self._my_roster_byes()
             money_remaining = self.state.league_money_remaining()
             slots_remaining = self.state.league_slots_remaining()
             my_max_bid = self.state.my_max_bid()
@@ -388,6 +409,7 @@ class Assistant:
             my_budget_remaining=my_budget,
             league_position_counts=league_counts,
             sales=sales,
+            roster_byes=roster_byes,
             limit=limit,
         )
 

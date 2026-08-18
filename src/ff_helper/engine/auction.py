@@ -32,7 +32,11 @@ from dataclasses import dataclass, field
 
 from ff_helper.engine.lineup import assign_lineup, depth_multiplier
 from ff_helper.engine.replacement import ReplacementLevels
-from ff_helper.engine.vona import penalized
+from ff_helper.engine.upside import upside_bonus
+
+# The injury residual is shared on purpose: the games-missed cut already lives in the
+# projection (blend.availability_of), and both formats price the leftover risk alike.
+from ff_helper.engine.vona import _BYE_PENALTY, _INJURY_RESIDUAL, penalized
 from ff_helper.rankings.blend import PlayerValuation
 from ff_helper.yahoo.models import LeagueSettings
 
@@ -44,6 +48,10 @@ MIN_BID = 1
 # at $60 because three teams happen to have money left.
 MIN_INFLATION = 0.25
 MAX_INFLATION = 3.0
+
+# Only players going for pocket change get an upside bonus: a $2 dart is exactly the
+# purchase where variance is the point, while a $30 starter is bought on projection.
+_DART_PRICE_CEILING = 3.0
 
 # Rungs of a position's price ladder, as offsets from the player the league's remaining
 # demand says I could realistically end up with (the k-th best left). Together with the
@@ -392,6 +400,7 @@ def recommend_auction(
     my_budget_remaining: int | None = None,
     league_position_counts: dict[str, int] | None = None,
     sales: list[Sale] | None = None,
+    roster_byes: dict[str, list[int]] | None = None,
     limit: int = 8,
 ) -> list[AuctionRecommendation]:
     """Rank the remaining players by where your dollars go furthest.
@@ -424,6 +433,18 @@ def recommend_auction(
         expected_of[key] = base * premiums.at(valuation.position) if base is not None else None
 
     open_dedicated, open_flex, backups = assign_lineup(roster_counts, settings)
+
+    # Roster fullness for the upside phase-in, and per-position dedicated starter
+    # counts for the bye-stack thinness check -- both mirror the snake engine.
+    roster_size = settings.roster_size or 0
+    fullness = sum(roster_counts.values()) / roster_size if roster_size else 0.0
+    dedicated_starters: dict[str, int] = {}
+    for slot in settings.starting_slots:
+        if len(slot.eligible_positions) == 1:
+            slot_position = next(iter(slot.eligible_positions))
+            dedicated_starters[slot_position] = (
+                dedicated_starters.get(slot_position, 0) + slot.count
+            )
 
     def factor_for(position: str) -> float:
         if open_dedicated.get(position, 0) > 0:
@@ -604,7 +625,21 @@ def recommend_auction(
                 0.6 * (surplus if surplus is not None else 0.0) + 0.4 * adjusted, need
             )
         if valuation.is_injured:
-            score = penalized(score, 0.5)
+            score = penalized(score, _INJURY_RESIDUAL)
+
+        # Pocket-change darts get their variance priced in dollars; a bye stacked on a
+        # thin position costs a real lineup week, also in dollars.
+        dart = 0.0
+        if expected_price <= _DART_PRICE_CEILING:
+            dart = upside_bonus(valuation, roster_fullness=fullness) * values.dollars_per_vor
+            score += dart
+        bye_clash = False
+        if roster_byes and valuation.bye_week is not None:
+            same_bye = roster_byes.get(valuation.position, [])
+            thin = held <= dedicated_starters.get(valuation.position, 0) + 1
+            if valuation.bye_week in same_bye and thin:
+                score -= _BYE_PENALTY * values.dollars_per_vor
+                bye_clash = True
 
         smart_cap = smart_cap_for(valuation.position)
 
@@ -637,6 +672,8 @@ def recommend_auction(
                     market_estimated,
                     smart_cap,
                     plan_bid_of.get(key),
+                    dart=dart,
+                    bye_clash=bye_clash,
                 ),
             )
         )
@@ -662,6 +699,9 @@ def _explain(
     market_estimated: bool,
     smart_cap: int,
     plan_bid: int | None = None,
+    *,
+    dart: float = 0.0,
+    bye_clash: bool = False,
 ) -> str:
     parts: list[str] = []
 
@@ -700,12 +740,22 @@ def _explain(
     elif affordable and smart_cap < my_max_bid and smart_cap < round(adjusted):
         parts.append(f"cap ${smart_cap} to keep real money for your open starters")
 
+    if bye_clash:
+        parts.append(f"shares week {valuation.bye_week} bye with your {valuation.position}")
+    if dart >= 1.0:
+        parts.append("high-variance upside; late-round dart")
+
     if valuation.tier is not None:
         parts.append(f"tier {valuation.tier}")
     if need < 1.0:
         parts.append(f"no open slot for him; you hold {held} at {valuation.position}")
     if valuation.is_injured:
-        parts.append(f"injury status {valuation.status}")
+        if valuation.availability < 1.0:
+            parts.append(
+                f"projection cut {1 - valuation.availability:.0%} for {valuation.status}"
+            )
+        else:
+            parts.append(f"injury status {valuation.status}")
     if valuation.points_estimated:
         parts.append("projection interpolated")
     if market_estimated:

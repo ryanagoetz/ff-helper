@@ -33,6 +33,28 @@ _STDEV_COEFFICIENT = 0.32
 _STDEV_EXPONENT = 0.87
 _STDEV_FLOOR = 1.5
 
+# Expected games missed by injury designation, out of a 17-game season. Deliberately
+# coarse: the point is that IR is a different *magnitude* of problem than Questionable,
+# not that we can predict a recovery week. Q and D are game-time tags and cost nothing
+# here; the engines keep a residual penalty for the risk a status cannot price.
+_EXPECTED_GAMES_MISSED = {"IR": 10.0, "PUP": 6.0, "NFI": 6.0, "O": 3.0, "SUSP": 3.0}
+_SEASON_GAMES = 17.0
+
+# Fallback spread of a projection when only one source supplied one, as a fraction of
+# the projection itself -- roughly the disagreement seen between major sources.
+_STDEV_POINTS_FRACTION = 0.12
+# A typical FantasyPros expert-rank spread; a player argued about twice as hard gets a
+# proportionally wider fallback points spread, clamped so one outlier cannot run wild.
+_ECR_STD_NEUTRAL = 5.0
+_ECR_STD_SCALE_MIN = 0.6
+_ECR_STD_SCALE_MAX = 2.0
+
+
+def availability_of(status: str) -> float:
+    """Fraction of the season a player with this status is expected to be active."""
+    missed = _EXPECTED_GAMES_MISSED.get(status.upper(), 0.0)
+    return (_SEASON_GAMES - missed) / _SEASON_GAMES
+
 
 def estimate_adp_stdev(adp: float) -> float:
     """Approximate the spread of draft positions for a player with this mean ADP."""
@@ -61,6 +83,13 @@ class PlayerValuation:
     # True when adp was derived from value rank because no source listed the player.
     adp_estimated: bool = False
     sources: tuple[str, ...] = ()
+    # Fraction of the season he is expected to play, from his injury status; his
+    # projected_points have already been scaled by it.
+    availability: float = 1.0
+    # Spread of the source projections, in points. Where sources genuinely disagree this
+    # is measured; otherwise it is a fraction of the projection widened by how hard the
+    # experts argue about him. The upside model reads it; nothing else does.
+    points_stdev: float = 0.0
 
     @property
     def is_injured(self) -> bool:
@@ -106,12 +135,20 @@ def blend(
             # Nothing to say about this player; leaving them out is better than
             # recommending someone we cannot value.
             continue
+        # Injury applied last, after interpolation: a curve read off healthy players
+        # must not inherit anyone's absence, and an absence scales spread and points
+        # alike. Everything downstream -- VOR, dollars, plans -- sees it automatically.
+        availability = availability_of(data["status"])
+        points = data["projected_points"] * availability
+        stdev = data["points_stdev"]
+        if stdev is None:
+            stdev = _STDEV_POINTS_FRACTION * data["projected_points"]
         result.valuations[player_key] = PlayerValuation(
             player_key=player_key,
             name=data["name"],
             position=data["position"],
             team=data["team"],
-            projected_points=data["projected_points"],
+            projected_points=points,
             adp=data["adp"],
             adp_stdev=data["adp_stdev"],
             bye_week=data["bye_week"],
@@ -122,6 +159,8 @@ def blend(
             points_estimated=data["points_estimated"],
             adp_estimated=data["adp_estimated"],
             sources=tuple(sorted(data["sources"])),
+            availability=availability,
+            points_stdev=stdev * availability,
         )
 
     return result
@@ -133,6 +172,7 @@ def _combine(player: YahooPlayer, rows: list[SourceRow], settings: LeagueSetting
     adp_values: list[tuple[str, float]] = []
     stdevs: list[float] = []
     ecrs: list[float] = []
+    ecr_stds: list[float] = []
     tiers: list[int] = []
     costs: list[float] = []
 
@@ -151,6 +191,8 @@ def _combine(player: YahooPlayer, rows: list[SourceRow], settings: LeagueSetting
             stdevs.append(row.adp_stdev)
         if row.ecr is not None:
             ecrs.append(row.ecr)
+        if row.ecr_std is not None:
+            ecr_stds.append(row.ecr_std)
         if row.tier is not None:
             tiers.append(row.tier)
         if row.auction_cost is not None and row.auction_cost > 0:
@@ -162,6 +204,20 @@ def _combine(player: YahooPlayer, rows: list[SourceRow], settings: LeagueSetting
             costs.append(cost)
 
     adp = _weighted_adp(adp_values)
+
+    # Measured disagreement when two or more sources projected him; otherwise a fraction
+    # of the projection, widened by how hard the experts argue about his rank. None here
+    # means "no projection yet" -- interpolated players get their fallback at build time.
+    points_stdev: float | None = None
+    if len(point_totals) >= 2:
+        points_stdev = statistics.stdev(point_totals)
+    elif point_totals:
+        scale = 1.0
+        if ecr_stds:
+            scale = statistics.fmean(ecr_stds) / _ECR_STD_NEUTRAL
+            scale = max(_ECR_STD_SCALE_MIN, min(_ECR_STD_SCALE_MAX, scale))
+        points_stdev = _STDEV_POINTS_FRACTION * point_totals[0] * scale
+
     return {
         "name": player.full_name,
         "position": player.primary_position,
@@ -169,6 +225,7 @@ def _combine(player: YahooPlayer, rows: list[SourceRow], settings: LeagueSetting
         "bye_week": player.bye_week,
         "status": player.status,
         "projected_points": statistics.fmean(point_totals) if point_totals else None,
+        "points_stdev": points_stdev,
         "points_estimated": False,
         "adp": adp,
         "adp_stdev": statistics.fmean(stdevs)

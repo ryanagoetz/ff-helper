@@ -192,6 +192,10 @@ class TestFantasyPros:
         assert chase.ecr == 1
         assert chase.tier == 1
         assert chase.position == "WR"
+        # rank_std rides along as ecr_std -- expert disagreement, an input to
+        # projection variance -- and is never mistaken for an ADP stdev.
+        assert chase.ecr_std == pytest.approx(0.5)
+        assert chase.adp_stdev is None
 
     def test_raises_loudly_when_page_shape_changes(self):
         # Silently returning [] here would look like "no players are ranked", which the
@@ -297,3 +301,90 @@ class TestBlend:
         assert result.valuations["461.p.2"].market_cost == pytest.approx(60.0)
         # A CSV cost is the user's own export for this league and is left alone.
         assert result.valuations["461.p.1"].market_cost == pytest.approx(40.0)
+
+
+class TestValuationRefinements:
+    """Injury availability, projection variance, and the snapshot bump that carries it."""
+
+    def _one_player_registry(self, status: str = "") -> PlayerRegistry:
+        hurt = YahooPlayer(
+            player_key="461.p.9",
+            player_id="9",
+            full_name="Fragile Back",
+            team_abbr="Chi",
+            display_position="RB",
+            eligible_positions=("RB",),
+            status=status,
+            draft_analysis=DraftAnalysis(average_pick=30.0),
+        )
+        return PlayerRegistry([hurt])
+
+    def _stat_row(self, *, source="ffc", yards=1000.0, ecr_std=None) -> SourceRow:
+        return SourceRow(
+            name="Fragile Back",
+            position="RB",
+            team="CHI",
+            source=source,
+            adp=30.0,
+            ecr_std=ecr_std,
+            stats={"rush_yds": yards},
+        )
+
+    def _blend_one(self, registry, rows, league_settings):
+        grouped, _ = registry.crosswalk(rows)
+        return blend(registry, grouped, league_settings).valuations["461.p.9"]
+
+    def test_injury_status_cuts_the_projection_by_expected_games(self, league_settings):
+        registry = self._one_player_registry(status="IR")
+        valuation = self._blend_one(registry, [self._stat_row()], league_settings)
+        # 1000 rush yards = 100 points, scaled to the 7 of 17 games IR leaves him.
+        assert valuation.availability == pytest.approx(7 / 17)
+        assert valuation.projected_points == pytest.approx(100.0 * 7 / 17)
+
+    def test_questionable_costs_nothing_at_blend_time(self, league_settings):
+        registry = self._one_player_registry(status="Q")
+        valuation = self._blend_one(registry, [self._stat_row()], league_settings)
+        assert valuation.availability == 1.0
+        assert valuation.projected_points == pytest.approx(100.0)
+
+    def test_disagreeing_sources_produce_a_measured_points_stdev(self, league_settings):
+        import statistics
+
+        registry = self._one_player_registry()
+        rows = [
+            self._stat_row(source="ffc", yards=1000.0),
+            self._stat_row(source="other", yards=1200.0),
+        ]
+        valuation = self._blend_one(registry, rows, league_settings)
+        assert valuation.points_stdev == pytest.approx(statistics.stdev([100.0, 120.0]))
+
+    def test_single_source_fallback_widens_with_expert_disagreement(self, league_settings):
+        registry = self._one_player_registry()
+        calm = self._blend_one(registry, [self._stat_row()], league_settings)
+        argued = self._blend_one(
+            registry, [self._stat_row(ecr_std=10.0)], league_settings
+        )
+        # Fallback is 12% of the projection; a rank_std twice the neutral 5.0 doubles it.
+        assert calm.points_stdev == pytest.approx(12.0)
+        assert argued.points_stdev == pytest.approx(24.0)
+
+    def test_snapshot_v2_round_trips_ecr_std_and_refuses_v1(self, tmp_path):
+        from ff_helper.rankings import cache
+
+        snapshot = cache.Snapshot(
+            league_key="461.l.9",
+            fetched_at=0.0,
+            rows=[self._stat_row(ecr_std=4.5)],
+        )
+        path = tmp_path / "snap.json"
+        cache.save(snapshot, path)
+        loaded = cache.load("461.l.9", path=path)
+        assert loaded is not None
+        assert loaded.rows[0].ecr_std == pytest.approx(4.5)
+
+        # A version-1 snapshot predates ecr_std: refuse it whole (forcing a one-minute
+        # re-fetch) rather than loading rows that silently lack the field.
+        payload = json.loads(path.read_text())
+        payload["version"] = 1
+        path.write_text(json.dumps(payload))
+        assert cache.load("461.l.9", path=path) is None

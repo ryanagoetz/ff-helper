@@ -173,6 +173,9 @@ class SourceRow:
     adp: float | None = None
     adp_stdev: float | None = None
     ecr: float | None = None
+    # Spread of expert *rank* opinion (FantasyPros rank_std). Not an ADP stdev -- it
+    # measures how argued-about a player is, which feeds projection uncertainty.
+    ecr_std: float | None = None
     tier: int | None = None
     projected_points: float | None = None
     # Average auction price. The auction analog of ADP: what the room will pay, which is

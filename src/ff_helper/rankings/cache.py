@@ -20,7 +20,10 @@ from ff_helper.config import cache_dir
 from ff_helper.rankings.players import SourceRow
 from ff_helper.yahoo.models import DraftAnalysis, YahooPlayer
 
-SNAPSHOT_VERSION = 1
+# Version 2: SourceRow grew ecr_std (expert-rank spread, feeding projection variance).
+# Older snapshots are refused so the field is actually present, not silently None --
+# ``load`` degrades to "re-run scripts/fetch_rankings.py", which takes a minute.
+SNAPSHOT_VERSION = 2
 
 
 @dataclass

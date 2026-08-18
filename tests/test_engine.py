@@ -123,14 +123,25 @@ class TestReplacement:
 
     def test_replacement_level_is_first_player_past_the_starters(self):
         levels = replacement.compute(self._pool(), settings(), num_teams=12)
-        assert levels.points["QB"] == pytest.approx(300 - 12 * 8)
+        # RB is flexed, so no streaming floor applies: the baseline is genuinely the
+        # first back past the startable set. 24 dedicated + however many flexes RB won.
+        rb_taken = levels.starters_drafted["RB"]
+        assert levels.points["RB"] == pytest.approx(250 - rb_taken * 5)
+
+    def test_onesie_replacement_is_the_streamable_twelfth_man(self):
+        # QB is a onesie in a W/R/T league: one starter each, no flex can hold a second,
+        # so about one is rostered per team and the 12th-best sits on waivers all year.
+        # The streaming floor lifts the baseline from the 13th QB (204) to the 12th
+        # (212), compressing every QB's VOR toward the field.
+        levels = replacement.compute(self._pool(), settings(), num_teams=12)
+        assert levels.points["QB"] == pytest.approx(300 - 11 * 8)
 
     def test_vor_is_relative_to_position(self):
         pool = self._pool()
         levels = replacement.compute(pool, settings(), num_teams=12)
         top_qb = next(p for p in pool if p.name == "qb0")
-        # A QB's raw 300 points is worth only its margin over the 13th-best QB.
-        assert levels.vor(top_qb) == pytest.approx(96)
+        # A QB's raw 300 points is worth only its margin over the streamable 12th QB.
+        assert levels.vor(top_qb) == pytest.approx(88)
         assert levels.vor(top_qb) < top_qb.projected_points
 
 
@@ -648,3 +659,90 @@ class TestRecommend:
         available = [player(f"RB{i}", "RB", 150 - i * 10, adp=10 + i * 5) for i in range(4)]
         picks = recommend(available, levels, settings(), {}, current_pick=10, next_pick=20)
         assert all(pick.reason for pick in picks)
+
+
+class TestValuationEffects:
+    """Bye stacking, late-round upside, and the streaming baseline for onesies."""
+
+    def _twins(self, points=150.0):
+        from dataclasses import replace
+
+        levels = replacement.ReplacementLevels(
+            points={"RB": 100.0}, starters_drafted={"RB": 30}
+        )
+        stacked = replace(player("Bye Twin", "RB", points, adp=30, stdev=4), bye_week=7)
+        clear = replace(player("Clear Twin", "RB", points, adp=30, stdev=4), bye_week=9)
+        return levels, stacked, clear
+
+    def test_a_stacked_bye_on_a_thin_position_ranks_lower(self):
+        levels, stacked, clear = self._twins()
+        picks = recommend(
+            [stacked, clear],
+            levels,
+            settings(),
+            {"RB": 1},
+            current_pick=20,
+            next_pick=33,
+            roster_byes={"RB": [7]},
+        )
+        assert picks[0].name == "Clear Twin"
+        stacked_pick = next(p for p in picks if p.name == "Bye Twin")
+        assert "shares week 7 bye with your RB" in stacked_pick.reason
+
+    def test_bye_stack_is_forgiven_once_the_position_is_deep(self):
+        # Four backs deep, a shared bye is a shrug: one of the others covers the week.
+        levels, stacked, clear = self._twins()
+        picks = recommend(
+            [stacked, clear],
+            levels,
+            settings(),
+            {"RB": 4},
+            current_pick=20,
+            next_pick=33,
+            roster_byes={"RB": [7]},
+        )
+        by_name = {p.name: p for p in picks}
+        assert by_name["Bye Twin"].score == pytest.approx(by_name["Clear Twin"].score)
+
+    def test_upside_never_reorders_open_starter_picks(self):
+        from dataclasses import replace
+
+        levels = replacement.ReplacementLevels(
+            points={"RB": 100.0}, starters_drafted={"RB": 30}
+        )
+        steady = player("Steady", "RB", 155, adp=30, stdev=4)
+        volatile = replace(player("Boom Bust", "RB", 148, adp=30, stdev=4), points_stdev=60.0)
+
+        early = recommend(
+            [steady, volatile], levels, settings(), {}, current_pick=20, next_pick=33
+        )
+        assert early[0].name == "Steady"
+
+        # Bench rounds: same two players, roster nearly full. Now the dart wins.
+        full_roster = {"QB": 1, "RB": 4, "WR": 4, "TE": 1, "K": 1, "DEF": 1}
+        late = recommend(
+            [steady, volatile], levels, settings(), full_roster, current_pick=140, next_pick=153
+        )
+        assert late[0].name == "Boom Bust"
+        assert "late-round dart" in late[0].reason
+
+    def test_two_qb_league_keeps_the_deep_baseline(self):
+        # Streaming only applies where one QB is startable league-wide. Start two and
+        # rosters carry backups, so the baseline stays the first man past the starters.
+        pool = [player(f"qb{i}", "QB", 300 - i * 8, adp=i + 1) for i in range(30)]
+        one_qb = settings()
+        two_qb = LeagueSettings(
+            roster_slots=(
+                RosterSlot("QB", 2),
+                RosterSlot("RB", 2),
+                RosterSlot("WR", 2),
+                RosterSlot("W/R/T", 1),
+                RosterSlot("BN", 6),
+            ),
+            stat_modifiers=PPR,
+            is_auction=False,
+        )
+        deep = replacement.compute(pool, two_qb, num_teams=12)
+        streamed = replacement.compute(pool, one_qb, num_teams=12)
+        assert deep.points["QB"] == pytest.approx(300 - 24 * 8)  # 25th QB, no floor
+        assert streamed.points["QB"] == pytest.approx(300 - 11 * 8)  # the streamable 12th

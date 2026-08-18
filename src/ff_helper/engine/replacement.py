@@ -84,4 +84,24 @@ def compute(
         index = min(taken.get(position, 0), len(pool) - 1)
         points[position] = pool[index].projected_points
 
+    # Onesie streaming. At a position where every team starts exactly one and no flex
+    # can hold a second (QB and K always; TE and DEF in most leagues), rosters carry
+    # about one apiece -- so a startable player sits on waivers all season, and weekly
+    # matchup-picking makes him at least the num_teams-th best by season points. VOR
+    # measured against the deeper draft-day baseline overstates what an early pick at
+    # these positions actually buys; the streamer is the honest floor.
+    dedicated: dict[str, int] = {}
+    flexed: set[str] = set()
+    for slot in settings.starting_slots:
+        eligible = slot.eligible_positions
+        if len(eligible) == 1:
+            position = next(iter(eligible))
+            dedicated[position] = dedicated.get(position, 0) + slot.count
+        else:
+            flexed |= eligible
+    for position, pool in pools.items():
+        onesie = dedicated.get(position) == 1 and position not in flexed
+        if onesie and len(pool) >= num_teams:
+            points[position] = max(points[position], pool[num_teams - 1].projected_points)
+
     return ReplacementLevels(points=points, starters_drafted=taken)

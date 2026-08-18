@@ -140,9 +140,11 @@ def parse_rankings(html: str) -> list[SourceRow]:
                 team=normalize_team(entry.get("player_team_id")),
                 source=SOURCE,
                 ecr=_as_float(entry.get("rank_ecr")),
+                # rank_std is the spread of expert opinion, not of draft position: it is
+                # carried as ecr_std (an input to projection uncertainty), never as an
+                # ADP stdev.
+                ecr_std=_as_float(entry.get("rank_std")),
                 tier=_as_int(entry.get("tier")),
-                # rank_std is the spread of expert opinion, not of draft position, so it
-                # is deliberately not used as an ADP stdev.
             )
         )
     if not rows:

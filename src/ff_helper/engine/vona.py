@@ -33,6 +33,7 @@ from ff_helper.engine.lineup import assign_lineup
 from ff_helper.engine.lineup import depth_multiplier as depth_multiplier
 from ff_helper.engine.replacement import ReplacementLevels
 from ff_helper.engine.room import RoomTendencies
+from ff_helper.engine.upside import upside_bonus
 from ff_helper.rankings.blend import PlayerValuation
 from ff_helper.yahoo.models import LeagueSettings
 
@@ -75,6 +76,16 @@ _NORMALIZER_MAX = 4.0
 # Bisection steps when solving for the normalizer; 24 halvings of [0.25, 4] pins the
 # exponent far below any resolution that could change a ranking.
 _NORMALIZER_ITERATIONS = 24
+
+# What remains of an injured player's score after his projection was already cut for
+# expected games missed (blend.availability_of). The absence itself is priced there;
+# this covers what a status cannot: re-injury risk, rust, the chance "out" grows.
+# Shared with the auction engine so both formats price the same risk the same way.
+_INJURY_RESIDUAL = 0.85
+
+# VOR-point cost of stacking a second bye on a position too thin to absorb it: one week
+# where the slot scores zero, softened by waiver-wire patching.
+_BYE_PENALTY = 3.0
 
 
 def survival_probability_at(pick: int, adp: float, sigma: float) -> float:
@@ -328,6 +339,7 @@ def recommend(
     tendencies: RoomTendencies | None = None,
     num_teams: int | None = None,
     market: SimulationResult | None = None,
+    roster_byes: dict[str, list[int]] | None = None,
     limit: int = 8,
 ) -> list[Recommendation]:
     """Rank the available players by the best draft you can still have.
@@ -405,6 +417,18 @@ def recommend(
     )
 
     open_dedicated, open_flex, backups = assign_lineup(roster_counts, settings)
+
+    # How full my roster is (for the upside phase-in) and how many starters each
+    # position gets dedicated slots for (for the bye-stack thinness check).
+    roster_size = settings.roster_size or 0
+    fullness = sum(roster_counts.values()) / roster_size if roster_size else 0.0
+    dedicated_starters: dict[str, int] = {}
+    for slot in settings.starting_slots:
+        if len(slot.eligible_positions) == 1:
+            slot_position = next(iter(slot.eligible_positions))
+            dedicated_starters[slot_position] = (
+                dedicated_starters.get(slot_position, 0) + slot.count
+            )
 
     # One entry per open starting slot: the positions that can fill it. Ranks are not
     # precomputed -- a slot's rank depends on how many same-position slots the plan has
@@ -556,7 +580,21 @@ def recommend(
 
         own = penalized(vor, factor)
         if valuation.is_injured:
-            own = penalized(own, 0.5)
+            own = penalized(own, _INJURY_RESIDUAL)
+
+        # Bench rounds tilt toward volatility; a bye stacked on a thin position costs a
+        # real lineup week. Both live in ``own``: they are about *this* player on *my*
+        # roster, not about the market.
+        dart = upside_bonus(valuation, roster_fullness=fullness)
+        own += dart
+        bye_clash = False
+        if roster_byes and valuation.bye_week is not None:
+            same_bye = roster_byes.get(position, [])
+            thin = held <= dedicated_starters.get(position, 0) + 1
+            if valuation.bye_week in same_bye and thin:
+                own -= _BYE_PENALTY
+                bye_clash = True
+
         score = own + max(
             plan_value(released, exclude, position if exclude else None)
             for released in released_options
@@ -583,6 +621,8 @@ def recommend(
                     tail_notes.setdefault(
                         position, market.tail_note(position) if market is not None else ""
                     ),
+                    dart=dart,
+                    bye_clash=bye_clash,
                 ),
             )
         )
@@ -627,6 +667,9 @@ def _explain(
     demand: float,
     wait_note: str,
     tail_note: str = "",
+    *,
+    dart: float = 0.0,
+    bye_clash: bool = False,
 ) -> str:
     """A one-line, human-checkable reason. You are the one making the pick."""
     gone = 1.0 - survival
@@ -662,11 +705,21 @@ def _explain(
     if valuation.tier is not None:
         parts.append(f"tier {valuation.tier}")
 
+    if bye_clash:
+        parts.append(f"shares week {valuation.bye_week} bye with your {valuation.position}")
+    if dart >= 1.0:
+        parts.append("high-variance upside; late-round dart")
+
     if factor < 1.0:
         parts.append(f"no open slot for him; you hold {held} at {valuation.position}")
 
     if valuation.is_injured:
-        parts.append(f"injury status {valuation.status}")
+        if valuation.availability < 1.0:
+            parts.append(
+                f"projection cut {1 - valuation.availability:.0%} for {valuation.status}"
+            )
+        else:
+            parts.append(f"injury status {valuation.status}")
     if valuation.points_estimated:
         parts.append("projection interpolated")
 
