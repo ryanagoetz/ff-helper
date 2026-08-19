@@ -14,7 +14,7 @@ A. Jeanty
 RB
 LV
 Bye 13
-Shazad
+Quinn
 $51
 Round 1
 14	
@@ -39,7 +39,7 @@ J. Jefferson
 WR
 Min
 Bye 6
-Dave
+Avery
 $52
 11	
 S. Barkley
@@ -55,7 +55,7 @@ J. Cook III
 RB
 Buf
 Bye 7
-Shazad
+Quinn
 $60
 9	
 J. Taylor
@@ -71,7 +71,7 @@ J. Smith-Njigba
 WR
 Sea
 Bye 11
-Dave
+Avery
 $66
 7	
 A. St. Brown
@@ -96,7 +96,7 @@ C. Lamb
 WR
 Dal
 Bye 14
-Derek
+Blake
 $62
 4	
 P. Nacua
@@ -105,7 +105,7 @@ Q
 WR
 LAR
 Bye 11
-Niki
+Sage
 $66
 3	
 B. Robinson
@@ -121,7 +121,7 @@ J. Chase
 WR
 Cin
 Bye 6
-Derek
+Blake
 $72
 1	
 J. Gibbs

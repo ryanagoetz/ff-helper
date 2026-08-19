@@ -399,7 +399,7 @@ class TestWholePageNoise:
     def _blob(self) -> str:
         fixture = (FIXTURES / "yahoo_draft_results.txt").read_text(encoding="utf-8")
         before = "Yahoo Fantasy\nDraft Room\n0:47\nNominate\n$1\nAuction Budget\n200\n"
-        after = "\nChat\nDerek: nice pick\n23\nShazad: ugh\nQueue\nWatch List\n"
+        after = "\nChat\nBlake: nice pick\n23\nQuinn: ugh\nQueue\nWatch List\n"
         return before + fixture + after
 
     def test_page_furniture_does_not_become_sales(self):

@@ -1,13 +1,13 @@
-# Bust A Move -- offline league description.
+# Example offline league description -- copy this and edit it for your own league.
 #
 # Used when the Yahoo API is unavailable. Everything here normally comes from the API;
-# offline it comes from you. Transcribed from the league's Scoring & Settings page.
+# offline it comes from you. Transcribe it from the league's Scoring & Settings page.
 #
-#   uv run python scripts/fetch_rankings.py --offline data/league-bustamove.yaml
-#   uv run ff-helper --offline data/league-bustamove.yaml
+#   uv run python scripts/fetch_rankings.py --offline data/league-mine.yaml
+#   uv run ff-helper --offline data/league-mine.yaml
 
-name: Bust A Move
-league_id: "107878"
+name: My League
+league_id: "000000"
 season: "2026"
 num_teams: 12
 draft_type: auction
@@ -52,24 +52,24 @@ scoring:
 # Draft-room spellings that differ from the names above. Only buyers need these: an
 # unresolved buyer leaves its money in the room and overstates every price the app quotes,
 # where an unresolved player is merely a sale the board misses. Fill these in from the
-# mock draft if the room shows anything different -- "Rx..." especially, since it is your
-# team and a mismatch there corrupts max bid.
+# draft room if it shows anything different -- your own team especially, since a mismatch
+# there corrupts max bid.
 team_aliases: {}
-#  "Rx…": "Rx..."
+#  "My Team Name...": "My Team Name"
 
-# Team names as of 2026-08-17. They can change up to the draft; if one does, edit it here
-# and in any keeper CSV, since both match on the name.
-my_team: "Rx..."
+# Team names as of the date you transcribed this. They can change up to the draft; if one
+# does, edit it here and in any keeper CSV, since both match on the name.
+my_team: "My Team"
 teams:
-  - "Loading Team Name..."
-  - "Murray- Present"
-  - "B-U-T(t)-S Butts Butts Butts"
-  - "Ja'Marr Ja'Marr Binks"
-  - "SumTingWong"
-  - "3 QB's"
-  - "My Chubb is Unable to Perform"
-  - "2 Gurleys 1 Kupp"
-  - "Rx..."
-  - "Sutton for Punishment"
-  - "Emeekah Eggbigboo"
-  - "2T TBD"
+  - "Team 1"
+  - "Team 2"
+  - "Team 3"
+  - "Team 4"
+  - "Team 5"
+  - "Team 6"
+  - "Team 7"
+  - "My Team"
+  - "Team 9"
+  - "Team 10"
+  - "Team 11"
+  - "Team 12"

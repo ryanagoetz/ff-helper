@@ -3,7 +3,7 @@
 
     uv run python scripts/mock_config.py < paste.txt
     pbpaste | uv run python scripts/mock_config.py          # macOS
-    uv run python scripts/mock_config.py --teams "Dave,Niki,Shazad,Your Team"
+    uv run python scripts/mock_config.py --teams "Avery,Sage,Quinn,Your Team"
 
 Testing the bridge needs a league whose teams are the ones in the room. A mock's teams are
 strangers with names you cannot know in advance, and typing twelve of them by hand while a

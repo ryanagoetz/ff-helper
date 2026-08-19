@@ -1,8 +1,12 @@
 # data/
 
-Projection exports and keeper files live here. Everything except this README and
-`.gitkeep` is gitignored — a subscriber export is not ours to redistribute, and the repo
-is public.
+Projection exports, keeper files, and league configs live here. **The directory is
+gitignored by default** — a subscriber export is not ours to redistribute, and a league
+config carries a real league ID and your leaguemates' team names. Only three things are
+allowed through, because they are generic or anonymized: this README,
+`league-example.yaml`, and the draft dumps under `drafts/`.
+
+Anything you add here stays local unless you add an explicit `!` rule to `.gitignore`.
 
 ## The normal case: one file
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Decide which players to keep.
 
-    uv run python scripts/evaluate_keepers.py --offline data/league-bustamove.yaml \
+    uv run python scripts/evaluate_keepers.py --offline data/league-mine.yaml \
         --candidates data/keeper-candidates.csv
 
 A keeper decision is not "who is best". It is "who is worth more than he costs", and the

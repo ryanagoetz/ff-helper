@@ -36,11 +36,11 @@ Team 13
 	$160	1/15
 
 	
-Isaac
+Alex
 	$17	3/15
 
 	
-Denise
+Jordan
 	$100	2/15
 
 	
@@ -52,11 +52,11 @@ Team 12
 	$76	2/15
 
 	
-ted
+riley
 	$200	0/15
 
 	
-Devin
+Casey
 	$22	4/15
 $29	
 Team 14
@@ -71,7 +71,7 @@ Team 8
 	$85	3/15
 
 	
-Patrick
+Morgan
 	$82	2/15
 Players
 Board
@@ -170,7 +170,7 @@ RB
 LAC
 Bye 7
 	
-Isaac
+Alex
 	$45
 21	
 D. London
@@ -194,7 +194,7 @@ WR
 Hou
 Bye 8
 	
-Devin
+Casey
 	$40
 18	
 D. Achane
@@ -218,7 +218,7 @@ RB
 LV
 Bye 13
 	
-Devin
+Casey
 	$48
 15	
 J. Jefferson
@@ -237,7 +237,7 @@ RB
 KC
 Bye 5
 	
-Devin
+Casey
 	$52
 13	
 S. Barkley
@@ -245,7 +245,7 @@ RB
 Phi
 Bye 10
 	
-Patrick
+Morgan
 	$57
 12	
 J. Cook III
@@ -253,7 +253,7 @@ RB
 Buf
 Bye 7
 	
-Patrick
+Morgan
 	$61
 11	
 J. Taylor
@@ -269,7 +269,7 @@ WR
 Sea
 Bye 11
 	
-Isaac
+Alex
 	$68
 9	
 C. Lamb
@@ -302,7 +302,7 @@ QB
 Was
 Bye 7
 	
-Denise
+Jordan
 	$23
 5	
 A. Brown
@@ -310,7 +310,7 @@ WR
 NE
 Bye 11
 	
-Devin
+Casey
 	$38
 4	
 P. Nacua
@@ -319,7 +319,7 @@ WR
 LAR
 Bye 11
 	
-Isaac
+Alex
 	$70
 3	
 J. Chase
@@ -343,7 +343,7 @@ RB
 Det
 Bye 6
 	
-Denise
+Jordan
 	$77
 Queue
 Team

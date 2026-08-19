@@ -236,8 +236,9 @@ export time — so `data/projections.csv` is the normal case and the per-league 
 only needed if you have a reason to give a league its own file. `fetch_rankings.py`
 records which file it used in the snapshot notes.
 
-Everything in `data/` is gitignored except its README — a subscriber export is not yours
-to redistribute.
+`data/` is gitignored by default — a subscriber export is not yours to redistribute, and
+a league config names your real league. Only the generic `league-example.yaml` and the
+anonymized draft dumps are tracked.
 
 Without a projections file the FantasyPros scrape is still attempted, and fails loudly
 when it gets the teaser rather than caching ten players as though they were a draft board.
@@ -255,7 +256,7 @@ mode runs the whole app without the API: you describe the league in a YAML file,
 player pool comes from your projections export, and picks are typed in.
 
 ```bash
-cp data/league-bustamove.yaml data/league-mine.yaml   # then edit it
+cp data/league-example.yaml data/league-mine.yaml   # then edit it
 uv run python scripts/fetch_rankings.py --offline data/league-mine.yaml
 uv run ff-helper --offline data/league-mine.yaml
 ```
