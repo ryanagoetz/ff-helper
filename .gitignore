@@ -32,6 +32,7 @@ data/drafts/*
 
 # Personal draft-day runbook -- names the real league and its teams throughout.
 MOCK-DRAFT.md
+checklist.md
 
 # Generated reader scripts contain the bridge token.
 *.ready.js
