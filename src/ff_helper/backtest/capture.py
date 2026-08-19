@@ -17,7 +17,14 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ff_helper.draft.state import DraftState
-from ff_helper.yahoo.models import DraftPick, League, LeagueSettings, RosterSlot, Team
+from ff_helper.yahoo.models import (
+    DraftPick,
+    KeptPlayer,
+    League,
+    LeagueSettings,
+    RosterSlot,
+    Team,
+)
 
 RECORD_VERSION = 1
 
@@ -33,6 +40,10 @@ class DraftRecord:
     league: League
     teams: tuple[Team, ...]
     picks: tuple[DraftPick, ...]
+    # Players kept before the draft. Without them a keeper league round-trips into a
+    # keeper-free board: wrong pick counts, invented rounds, and kept studs sitting
+    # "available" all draft -- which shows up as impossible survivals in calibration.
+    keepers: tuple[KeptPlayer, ...] = ()
     # Which ranking snapshot this draft should be evaluated against; a league key for
     # ``cache.load`` or None to fall back to the record's own league key.
     snapshot_ref: str | None = None
@@ -52,6 +63,7 @@ def record_from_live(
     teams: list[Team],
     picks: list[DraftPick],
     *,
+    keepers: list[KeptPlayer] | None = None,
     snapshot_ref: str | None = None,
 ) -> DraftRecord:
     """Freeze a just-fetched draft into a record."""
@@ -61,13 +73,19 @@ def record_from_live(
         league=league,
         teams=tuple(teams),
         picks=tuple(sorted(picks)),
+        keepers=tuple(keepers or ()),
         snapshot_ref=snapshot_ref,
     )
 
 
 def build_state(record: DraftRecord) -> tuple[League, DraftState]:
     """An empty draft board for this record's league, ready to replay picks into."""
-    return record.league, DraftState(league=record.league, teams=list(record.teams))
+    state = DraftState(league=record.league, teams=list(record.teams))
+    if record.keepers:
+        # Attach before any consumer computes pick math; Assistant.build re-applies
+        # once it knows the true roster size, exactly as the live path does.
+        state.apply_keepers(list(record.keepers))
+    return record.league, state
 
 
 def save_record(record: DraftRecord, path: Path, *, anonymize: bool = True) -> Path:
@@ -115,6 +133,16 @@ def save_record(record: DraftRecord, path: Path, *, anonymize: bool = True) -> P
                 "cost": pick.cost,
             }
             for pick in record.picks
+        ],
+        "keepers": [
+            {
+                "player_key": keeper.player_key,
+                "team_key": keeper.team_key,
+                "cost": keeper.cost,
+                "round": keeper.round,
+                "source": keeper.source,
+            }
+            for keeper in record.keepers
         ],
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -168,10 +196,23 @@ def load_record(path: Path) -> DraftRecord:
         )
         for entry in payload["picks"]
     )
+    keepers = tuple(
+        KeptPlayer(
+            player_key=entry["player_key"],
+            team_key=entry["team_key"],
+            cost=entry.get("cost"),
+            round=entry.get("round"),
+            source=entry.get("source", "yahoo"),
+        )
+        # Older records predate the field; a missing list means "no keepers", which is
+        # exactly what those records meant.
+        for entry in payload.get("keepers", [])
+    )
     return DraftRecord(
         league=league,
         teams=teams,
         picks=tuple(sorted(picks)),
+        keepers=keepers,
         snapshot_ref=payload.get("snapshot_ref"),
         version=version,
     )

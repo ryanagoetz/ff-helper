@@ -177,9 +177,14 @@ def _solve_normalizer(survivals: list[float], budget: int) -> float:
 
     ``sum(1 - s^beta)`` is monotone increasing in beta, so bisection converges; outside
     the clamp the pool is too small or too lopsided for the budget and the boundary is
-    the honest answer.
+    the honest answer -- except a zero budget, whose honest exponent is 0: when no
+    opponent picks in the window (back-to-back wheel turns), everyone survives with
+    certainty, and the 0.25 clamp would report a 16% chance of losing a coin-flip
+    player to a pick that does not exist.
     """
-    if not survivals or budget <= 0:
+    if budget <= 0:
+        return 0.0
+    if not survivals:
         return _NORMALIZER_MIN
 
     def removed(beta: float) -> float:
@@ -558,15 +563,19 @@ def recommend(
             flex_needs = [index for index, eligible in enumerate(needs) if position in eligible]
             released_options = list(flex_needs) if flex_needs else [None]
 
-        # Taking him means he is no longer his own position's fallback. Only worth
-        # modelling for the top of the pool; below that the effect is noise.
+        # Taking him means he is no longer his own position's fallback. The *plan*
+        # models that only for the top of the pool -- each exclusion re-runs the DP,
+        # and below the top the effect on plan totals is noise.
         is_top = any(c.player_key == valuation.player_key for c in pool[:_EXCLUSION_DEPTH])
         exclude = valuation.player_key if is_top else None
 
         # "Next available" excludes the candidate himself: his VONA measures the cliff
         # *behind* him, not his own habit of surviving. (His own survival is reported
-        # separately -- the two argue for opposite actions.)
-        vona = vor - expected_at(position, 1, horizon, exclude)
+        # separately -- the two argue for opposite actions.) Unlike the plan, the
+        # displayed number self-excludes for *every* candidate: one rank-1 expected
+        # value is cheap, and gating it created a discontinuity where rank 3 and rank
+        # 4 of a flat tier showed VONAs 1.5 apart and opposite reason strings.
+        vona = vor - expected_at(position, 1, horizon, valuation.player_key)
         survival = None if market is None else market.survival(valuation.player_key, horizon)
         if survival is None:
             survival = survival_probability(

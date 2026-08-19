@@ -111,14 +111,20 @@ def room_tendencies(observations: list[PickObservation]) -> RoomTendencies:
 def observations_from_board(
     picks: Iterable[DraftPick],
     valuations: dict[str, PlayerValuation],
+    *,
+    exclude_team: str | None = None,
 ) -> list[PickObservation]:
     """Turn the live board into tendency observations.
 
     Players the blend could not place are skipped: an *estimated* ADP would let the
-    model observe its own guess as if the room had confirmed it.
+    model observe its own guess as if the room had confirmed it. ``exclude_team``
+    should be *my* team: the estimator predicts opponent behavior, and learning from
+    my own picks feeds the engine's advice back into the model that produces it.
     """
     observations: list[PickObservation] = []
     for pick in picks:
+        if exclude_team is not None and pick.team_key == exclude_team:
+            continue
         valuation = valuations.get(pick.player_key)
         if valuation is None or valuation.adp_estimated:
             continue

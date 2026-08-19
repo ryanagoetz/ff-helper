@@ -623,15 +623,19 @@ class TestPlanScoring:
         by_name = {pick.name: pick for pick in degraded}
         assert by_name["Top QB"].score == pytest.approx(by_name["Top RB"].score)
 
-    def test_plan_bid_pays_up_when_needs_are_few_and_tightens_when_they_are_many(self):
-        # With only the QB slot open, overpaying costs no other need anything, so the
-        # plan lets the hard ceiling govern. Open an RB need too and the plan stops at
-        # the price that still leaves the RB fundable.
+    def test_plan_bid_never_exceeds_worth(self):
+        # The DP prices leftover dollars at zero, so with slack it would endorse any
+        # price for any player -- the cap at worth is what keeps "bid to" rational.
+        # Regression: a roster with only the QB slot open used to report plan_bid ==
+        # my_max_bid (50) for a $30 player, and a fully-started roster reported the
+        # hard ceiling for every bench body on the board.
         only_qb = self._world(roster={"WR": 3, "TE": 1, "RB": 2})
+        assert only_qb["Top QB"].plan_bid == 30  # his worth, not the $50 ceiling
+        started = self._world(roster={"QB": 1, "WR": 3, "TE": 1, "RB": 2})
+        for pick in started.values():
+            assert pick.plan_bid <= int(pick.value + 0.5)
         qb_and_rb = self._world()
-        assert only_qb["Top QB"].plan_bid == 50
-        assert qb_and_rb["Top QB"].plan_bid == 36
-        assert qb_and_rb["Top QB"].plan_bid < only_qb["Top QB"].plan_bid
+        assert qb_and_rb["Top QB"].plan_bid == 30
 
     def test_bid_to_respects_every_ceiling(self):
         for pick in self._world().values():

@@ -15,11 +15,13 @@ enough to overrule the projections.
 
 from __future__ import annotations
 
-from ff_helper.rankings.blend import PlayerValuation
+from ff_helper.rankings.blend import _STDEV_POINTS_FRACTION, PlayerValuation
 
-# The ordinary spread every projection carries (matches blend's fallback fraction);
-# only spread beyond it earns a bonus, so single-source players score exactly zero.
-_BASELINE_FRACTION = 0.12
+# The ordinary spread every projection carries -- imported from blend rather than
+# restated, because the model only works while the two agree: if blend's fallback
+# fraction ever exceeded this baseline, every interpolated K/DEF/bench player would
+# clear it at once and collect the full dart cap.
+_BASELINE_FRACTION = _STDEV_POINTS_FRACTION
 
 # Roster fullness where the bonus starts ramping in and where it reaches full weight.
 # Below the start, starting lineups are still being built and the bonus must be zero.

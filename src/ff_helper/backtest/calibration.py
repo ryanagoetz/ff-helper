@@ -30,6 +30,17 @@ from ff_helper.rankings.blend import PlayerValuation
 from ff_helper.yahoo.models import DraftPick
 
 
+def _opponent_observations(assistant: Assistant):
+    """Tendency observations from opponents only, mirroring the assistant's own filter:
+    my picks reflect the engine's advice, not the room's habits."""
+    my_team = assistant.state.my_team
+    return observations_from_board(
+        assistant.state.board.values(),
+        assistant.valuations.valuations,
+        exclude_team=my_team.team_key if my_team else None,
+    )
+
+
 class Predictor(Protocol):
     """P(still available at target_pick) for every player available at current_pick."""
 
@@ -54,9 +65,7 @@ def analytic_predictor(
     position_of = assistant.position_of
     demand = assistant._position_demand(current_pick, [target_pick], position_of)
     shares = demand.get(target_pick, {})
-    tendencies = room_tendencies(
-        observations_from_board(assistant.state.board.values(), assistant.valuations.valuations)
-    )
+    tendencies = room_tendencies(_opponent_observations(assistant))
     raw = {
         valuation.player_key: survival_probability(
             valuation,
@@ -94,9 +103,7 @@ def mc_predictor(
     pick_owner, team_rosters = assistant._market_inputs(
         current_pick, [target_pick], assistant.position_of
     )
-    tendencies = room_tendencies(
-        observations_from_board(assistant.state.board.values(), assistant.valuations.valuations)
-    )
+    tendencies = room_tendencies(_opponent_observations(assistant))
     market = simulate_market(
         available,
         assistant.levels,

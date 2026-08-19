@@ -231,6 +231,21 @@ class TestRoomTendencies:
         assert tendencies.overall == 0.0
         assert tendencies.shift("RB") == 0.0
 
+    def test_my_own_picks_are_excluded_from_observations(self):
+        # The estimator predicts opponent behavior; learning from my own picks feeds
+        # the engine's advice back into the model that produces it.
+        from ff_helper.yahoo.models import DraftPick
+
+        me, rival = "t.me", "t.rival"
+        pool = {f"p.x{i}": player(f"x{i}", "RB", 150, adp=10 + i) for i in range(4)}
+        picks = [
+            DraftPick(pick=i + 1, round=1, team_key=me if i % 2 == 0 else rival,
+                      player_key=key)
+            for i, key in enumerate(pool)
+        ]
+        observed = observations_from_board(picks, pool, exclude_team=me)
+        assert len(observed) == 2  # only the rival's two picks count
+
     def test_uniformly_slow_room_shifts_positive_but_shrunk(self):
         # Thirty picks each 8 later than ADP: a real tendency, but the prior keeps the
         # estimate below the raw mean and the clamp keeps it sane.

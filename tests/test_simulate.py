@@ -105,6 +105,25 @@ class TestInvariants:
         assert set(result.removed_counts[15]) == {4}
         assert set(result.removed_counts[20]) == {8}
 
+    def test_pool_exhaustion_keeps_answering_instead_of_crashing(self):
+        # 8 players, 30 opponent picks: the board runs dry mid-window. Regression:
+        # rollouts used to break early, leaving later targets unrecorded -- expected_at
+        # divided by an empty list (ZeroDivisionError through the whole recommendation
+        # call) and survival masqueraded as a confident answer over a wrong denominator.
+        pool = [player(f"rb{i}", "RB", 150 - i, i + 1, stdev=2) for i in range(8)]
+        result = run(
+            pool,
+            current=1,
+            my_picks=(31,),
+            targets=(15, 31),
+            config=SimulationConfig(rollouts=30, seed=7, window=60),
+        )
+        assert result.targets == (15, 31)
+        assert result.expected_at("RB", 1, 31) == 0.0  # everyone gone -> replacement
+        assert len(result.removed_counts[31]) == 30  # every rollout recorded the target
+        assert set(result.removed_counts[31]) == {8}  # removals cap at the pool size
+        assert result.survival("p.rb0", 15) == 0.0  # honestly gone, not a crash
+
     def test_targets_beyond_the_window_are_not_covered(self):
         result = run(
             default_pool(),

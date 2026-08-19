@@ -92,6 +92,12 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.from_file:
+        # The offline path skips load_settings(), which is the only place .env gets
+        # loaded -- without this, FF_HELPER_HOME/FF_MC_ROLLOUTS set there are ignored
+        # and cache.load looks in the wrong state directory.
+        from dotenv import load_dotenv
+
+        load_dotenv()
         league, teams, picks, state, snapshot_key = _load_from_file(Path(args.from_file))
         snapshot = cache.load(snapshot_key)
         if snapshot is None:

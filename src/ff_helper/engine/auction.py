@@ -272,6 +272,15 @@ def _estimate_markets(
     return estimates
 
 
+def _dollars(amount: float) -> int:
+    """Whole dollars, halves rounding up.
+
+    ``round()`` is banker's rounding: 2.5 -> 2 but 3.5 -> 4, which prices alternate
+    ladder rungs a dollar low and charges the plan less than the room will pay.
+    """
+    return int(amount + 0.5)
+
+
 def _price_ladder(
     pool: list[PlayerValuation],
     demand_index: int,
@@ -303,7 +312,7 @@ def _price_ladder(
         price = expected_of.get(chosen.player_key)
         if price is None:
             price = adjusted_of[chosen.player_key]
-        ladder.append((max(MIN_BID, round(price)), adjusted_of[chosen.player_key]))
+        ladder.append((max(MIN_BID, _dollars(price)), adjusted_of[chosen.player_key]))
     return ladder
 
 
@@ -366,9 +375,9 @@ class AuctionRecommendation:
     # *starter* slots at realistic prices, not $1 apiece.
     smart_cap: int
     # The highest price at which buying him still beats spending the money on the rest
-    # of the plan (None when budget info is missing and no plan could be computed). Can
-    # exceed his raw worth: when his position cannot be punted, overpaying beats the
-    # alternative -- which is exactly what a per-player value can never express.
+    # of the plan, capped at his own worth (None when budget info is missing and no
+    # plan could be computed). Its value is the downward signal: "worth $90, but stop
+    # at $87 -- the rest of your plan needs the difference."
     plan_bid: int | None = None
 
     @property
@@ -584,12 +593,21 @@ def recommend_auction(
             return cached
 
         def plan_bid_for(position: str, adjusted: float) -> int:
-            """Largest price at which buying still beats the plan without him."""
-            if my_max_bid < MIN_BID:
+            """Largest price at which buying still beats the plan without him.
+
+            Capped at his own worth. The DP prices leftover dollars at zero -- money
+            unspent buys nothing it can see -- so whenever the plan has slack it would
+            happily endorse *any* price for *any* player, and a $24 bench body would
+            show "bid to $45". Below worth the search carries the real signal ("stop
+            at $87 though he is worth $90; the rest is spoken for"); above worth it
+            only ever measured the slack.
+            """
+            ceiling = min(my_max_bid, _dollars(adjusted))
+            if ceiling < MIN_BID:
                 return 0
             if adjusted + plan_after(position, MIN_BID) - base_plan < 0:
                 return 0
-            low, high = MIN_BID, my_max_bid
+            low, high = MIN_BID, ceiling
             while low < high:
                 mid = (low + high + 1) // 2
                 if adjusted + plan_after(position, mid) - base_plan >= 0:
@@ -618,7 +636,7 @@ def recommend_auction(
 
         if plan_mode and market is not None:
             # His value plus the plan with him bought, against the plan without him.
-            price_paid = max(MIN_BID, round(expected_price))
+            price_paid = max(MIN_BID, _dollars(expected_price))
             marginal = adjusted + plan_after(valuation.position, price_paid) - base_plan
             score = penalized(marginal, need)
         else:
@@ -740,16 +758,20 @@ def _explain(
         parts.append(f"bargains available, prices at {inflation:.0%} of par")
 
     if affordable and plan_bid is not None:
-        worth = round(adjusted)
+        worth = _dollars(adjusted)
         if plan_bid <= 0:
             parts.append("your plan spends every dollar better elsewhere")
-        elif plan_bid < worth:
+        elif plan_bid < worth and plan_bid <= smart_cap:
             parts.append(f"plan says stop at ${plan_bid}; the rest is spoken for")
-        elif worth < plan_bid < my_max_bid and round(expected_price) > worth:
-            # The room prices him above his worth, yet the plan still pays: his slot
-            # has no cheap fallback, and losing him costs more than the overage.
-            parts.append(f"worth stretching to ${plan_bid}; his slot has no cheap fallback")
-    elif affordable and smart_cap < my_max_bid and smart_cap < round(adjusted):
+    # The smart cap gets its own line whenever it is the constraint that actually
+    # binds -- an `elif` here left a $32-worth player showing "bid to $8" with no
+    # explanation whenever a plan existed.
+    if (
+        affordable
+        and smart_cap < my_max_bid
+        and smart_cap < _dollars(adjusted)
+        and (plan_bid is None or smart_cap < plan_bid)
+    ):
         parts.append(f"cap ${smart_cap} to keep real money for your open starters")
 
     if bye_clash:

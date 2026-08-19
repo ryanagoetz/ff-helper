@@ -1,0 +1,1187 @@
+{
+ "version": 1,
+ "snapshot_ref": "2025.l.667109",
+ "league": {
+  "league_key": "2025.l.667109",
+  "league_id": "667109",
+  "name": "League 667109",
+  "num_teams": 10,
+  "season": "2025",
+  "draft_status": "postdraft",
+  "scoring_type": "head"
+ },
+ "settings": {
+  "roster_slots": [
+   [
+    "QB",
+    1
+   ],
+   [
+    "WR",
+    2
+   ],
+   [
+    "RB",
+    2
+   ],
+   [
+    "TE",
+    1
+   ],
+   [
+    "W/R",
+    1
+   ],
+   [
+    "K",
+    1
+   ],
+   [
+    "DEF",
+    1
+   ],
+   [
+    "BN",
+    6
+   ],
+   [
+    "IR",
+    1
+   ]
+  ],
+  "stat_modifiers": {
+   "9": 0.1,
+   "10": 6.0,
+   "11": 0.5,
+   "12": 0.1,
+   "13": 6.0
+  },
+  "is_auction": false,
+  "auction_budget": 200
+ },
+ "teams": [
+  {
+   "team_key": "2025.l.667109.t.1",
+   "team_id": "1",
+   "name": "Team 1",
+   "is_mine": false,
+   "draft_position": 1
+  },
+  {
+   "team_key": "2025.l.667109.t.2",
+   "team_id": "2",
+   "name": "Team 2",
+   "is_mine": false,
+   "draft_position": 2
+  },
+  {
+   "team_key": "2025.l.667109.t.3",
+   "team_id": "3",
+   "name": "Team 3",
+   "is_mine": false,
+   "draft_position": 3
+  },
+  {
+   "team_key": "2025.l.667109.t.4",
+   "team_id": "4",
+   "name": "Team 4",
+   "is_mine": false,
+   "draft_position": 4
+  },
+  {
+   "team_key": "2025.l.667109.t.5",
+   "team_id": "5",
+   "name": "Team 5",
+   "is_mine": false,
+   "draft_position": 5
+  },
+  {
+   "team_key": "2025.l.667109.t.6",
+   "team_id": "6",
+   "name": "Team 6",
+   "is_mine": false,
+   "draft_position": 6
+  },
+  {
+   "team_key": "2025.l.667109.t.7",
+   "team_id": "7",
+   "name": "Team 7",
+   "is_mine": false,
+   "draft_position": 7
+  },
+  {
+   "team_key": "2025.l.667109.t.8",
+   "team_id": "8",
+   "name": "Team 8",
+   "is_mine": false,
+   "draft_position": 8
+  },
+  {
+   "team_key": "2025.l.667109.t.9",
+   "team_id": "9",
+   "name": "Team 9",
+   "is_mine": true,
+   "draft_position": 9
+  },
+  {
+   "team_key": "2025.l.667109.t.10",
+   "team_id": "10",
+   "name": "Team 10",
+   "is_mine": false,
+   "draft_position": 10
+  }
+ ],
+ "picks": [
+  {
+   "pick": 1,
+   "round": 1,
+   "team_key": "2025.l.667109.t.1",
+   "player_key": "2025.p.3",
+   "cost": null
+  },
+  {
+   "pick": 2,
+   "round": 1,
+   "team_key": "2025.l.667109.t.2",
+   "player_key": "2025.p.6",
+   "cost": null
+  },
+  {
+   "pick": 3,
+   "round": 1,
+   "team_key": "2025.l.667109.t.3",
+   "player_key": "2025.p.4",
+   "cost": null
+  },
+  {
+   "pick": 4,
+   "round": 1,
+   "team_key": "2025.l.667109.t.4",
+   "player_key": "2025.p.7",
+   "cost": null
+  },
+  {
+   "pick": 5,
+   "round": 1,
+   "team_key": "2025.l.667109.t.5",
+   "player_key": "2025.p.8",
+   "cost": null
+  },
+  {
+   "pick": 6,
+   "round": 1,
+   "team_key": "2025.l.667109.t.6",
+   "player_key": "2025.p.1",
+   "cost": null
+  },
+  {
+   "pick": 7,
+   "round": 1,
+   "team_key": "2025.l.667109.t.7",
+   "player_key": "2025.p.17",
+   "cost": null
+  },
+  {
+   "pick": 8,
+   "round": 1,
+   "team_key": "2025.l.667109.t.8",
+   "player_key": "2025.p.5",
+   "cost": null
+  },
+  {
+   "pick": 9,
+   "round": 1,
+   "team_key": "2025.l.667109.t.9",
+   "player_key": "2025.p.9",
+   "cost": null
+  },
+  {
+   "pick": 10,
+   "round": 1,
+   "team_key": "2025.l.667109.t.10",
+   "player_key": "2025.p.23",
+   "cost": null
+  },
+  {
+   "pick": 11,
+   "round": 2,
+   "team_key": "2025.l.667109.t.10",
+   "player_key": "2025.p.15",
+   "cost": null
+  },
+  {
+   "pick": 12,
+   "round": 2,
+   "team_key": "2025.l.667109.t.9",
+   "player_key": "2025.p.19",
+   "cost": null
+  },
+  {
+   "pick": 13,
+   "round": 2,
+   "team_key": "2025.l.667109.t.8",
+   "player_key": "2025.p.22",
+   "cost": null
+  },
+  {
+   "pick": 14,
+   "round": 2,
+   "team_key": "2025.l.667109.t.7",
+   "player_key": "2025.p.18",
+   "cost": null
+  },
+  {
+   "pick": 15,
+   "round": 2,
+   "team_key": "2025.l.667109.t.6",
+   "player_key": "2025.p.43",
+   "cost": null
+  },
+  {
+   "pick": 16,
+   "round": 2,
+   "team_key": "2025.l.667109.t.5",
+   "player_key": "2025.p.25",
+   "cost": null
+  },
+  {
+   "pick": 17,
+   "round": 2,
+   "team_key": "2025.l.667109.t.4",
+   "player_key": "2025.p.12",
+   "cost": null
+  },
+  {
+   "pick": 18,
+   "round": 2,
+   "team_key": "2025.l.667109.t.3",
+   "player_key": "2025.p.2",
+   "cost": null
+  },
+  {
+   "pick": 19,
+   "round": 2,
+   "team_key": "2025.l.667109.t.2",
+   "player_key": "2025.p.47",
+   "cost": null
+  },
+  {
+   "pick": 20,
+   "round": 2,
+   "team_key": "2025.l.667109.t.1",
+   "player_key": "2025.p.37",
+   "cost": null
+  },
+  {
+   "pick": 21,
+   "round": 3,
+   "team_key": "2025.l.667109.t.1",
+   "player_key": "2025.p.39",
+   "cost": null
+  },
+  {
+   "pick": 22,
+   "round": 3,
+   "team_key": "2025.l.667109.t.5",
+   "player_key": "2025.p.33",
+   "cost": null
+  },
+  {
+   "pick": 23,
+   "round": 3,
+   "team_key": "2025.l.667109.t.3",
+   "player_key": "2025.p.24",
+   "cost": null
+  },
+  {
+   "pick": 24,
+   "round": 3,
+   "team_key": "2025.l.667109.t.4",
+   "player_key": "2025.p.32",
+   "cost": null
+  },
+  {
+   "pick": 25,
+   "round": 3,
+   "team_key": "2025.l.667109.t.5",
+   "player_key": "2025.p.38",
+   "cost": null
+  },
+  {
+   "pick": 26,
+   "round": 3,
+   "team_key": "2025.l.667109.t.6",
+   "player_key": "2025.p.30",
+   "cost": null
+  },
+  {
+   "pick": 27,
+   "round": 3,
+   "team_key": "2025.l.667109.t.7",
+   "player_key": "2025.p.21",
+   "cost": null
+  },
+  {
+   "pick": 28,
+   "round": 3,
+   "team_key": "2025.l.667109.t.8",
+   "player_key": "2025.p.11",
+   "cost": null
+  },
+  {
+   "pick": 29,
+   "round": 3,
+   "team_key": "2025.l.667109.t.9",
+   "player_key": "2025.p.36",
+   "cost": null
+  },
+  {
+   "pick": 30,
+   "round": 3,
+   "team_key": "2025.l.667109.t.10",
+   "player_key": "2025.p.31",
+   "cost": null
+  },
+  {
+   "pick": 31,
+   "round": 4,
+   "team_key": "2025.l.667109.t.10",
+   "player_key": "2025.p.44",
+   "cost": null
+  },
+  {
+   "pick": 32,
+   "round": 4,
+   "team_key": "2025.l.667109.t.9",
+   "player_key": "2025.p.45",
+   "cost": null
+  },
+  {
+   "pick": 33,
+   "round": 4,
+   "team_key": "2025.l.667109.t.8",
+   "player_key": "2025.p.29",
+   "cost": null
+  },
+  {
+   "pick": 34,
+   "round": 4,
+   "team_key": "2025.l.667109.t.7",
+   "player_key": "2025.p.40",
+   "cost": null
+  },
+  {
+   "pick": 35,
+   "round": 4,
+   "team_key": "2025.l.667109.t.6",
+   "player_key": "2025.p.48",
+   "cost": null
+  },
+  {
+   "pick": 36,
+   "round": 4,
+   "team_key": "2025.l.667109.t.5",
+   "player_key": "2025.p.64",
+   "cost": null
+  },
+  {
+   "pick": 37,
+   "round": 4,
+   "team_key": "2025.l.667109.t.4",
+   "player_key": "2025.p.35",
+   "cost": null
+  },
+  {
+   "pick": 38,
+   "round": 4,
+   "team_key": "2025.l.667109.t.3",
+   "player_key": "2025.p.68",
+   "cost": null
+  },
+  {
+   "pick": 39,
+   "round": 4,
+   "team_key": "2025.l.667109.t.2",
+   "player_key": "2025.p.53",
+   "cost": null
+  },
+  {
+   "pick": 40,
+   "round": 4,
+   "team_key": "2025.l.667109.t.1",
+   "player_key": "2025.p.136",
+   "cost": null
+  },
+  {
+   "pick": 41,
+   "round": 5,
+   "team_key": "2025.l.667109.t.1",
+   "player_key": "2025.p.82",
+   "cost": null
+  },
+  {
+   "pick": 42,
+   "round": 5,
+   "team_key": "2025.l.667109.t.2",
+   "player_key": "2025.p.51",
+   "cost": null
+  },
+  {
+   "pick": 43,
+   "round": 5,
+   "team_key": "2025.l.667109.t.3",
+   "player_key": "2025.p.49",
+   "cost": null
+  },
+  {
+   "pick": 44,
+   "round": 5,
+   "team_key": "2025.l.667109.t.4",
+   "player_key": "2025.p.59",
+   "cost": null
+  },
+  {
+   "pick": 45,
+   "round": 5,
+   "team_key": "2025.l.667109.t.5",
+   "player_key": "2025.p.117",
+   "cost": null
+  },
+  {
+   "pick": 46,
+   "round": 5,
+   "team_key": "2025.l.667109.t.6",
+   "player_key": "2025.p.28",
+   "cost": null
+  },
+  {
+   "pick": 47,
+   "round": 5,
+   "team_key": "2025.l.667109.t.7",
+   "player_key": "2025.p.63",
+   "cost": null
+  },
+  {
+   "pick": 48,
+   "round": 5,
+   "team_key": "2025.l.667109.t.8",
+   "player_key": "2025.p.66",
+   "cost": null
+  },
+  {
+   "pick": 49,
+   "round": 5,
+   "team_key": "2025.l.667109.t.9",
+   "player_key": "2025.p.69",
+   "cost": null
+  },
+  {
+   "pick": 50,
+   "round": 5,
+   "team_key": "2025.l.667109.t.10",
+   "player_key": "2025.p.46",
+   "cost": null
+  },
+  {
+   "pick": 51,
+   "round": 6,
+   "team_key": "2025.l.667109.t.10",
+   "player_key": "2025.p.56",
+   "cost": null
+  },
+  {
+   "pick": 52,
+   "round": 6,
+   "team_key": "2025.l.667109.t.9",
+   "player_key": "2025.p.62",
+   "cost": null
+  },
+  {
+   "pick": 53,
+   "round": 6,
+   "team_key": "2025.l.667109.t.8",
+   "player_key": "2025.p.52",
+   "cost": null
+  },
+  {
+   "pick": 54,
+   "round": 6,
+   "team_key": "2025.l.667109.t.7",
+   "player_key": "2025.p.60",
+   "cost": null
+  },
+  {
+   "pick": 55,
+   "round": 6,
+   "team_key": "2025.l.667109.t.6",
+   "player_key": "2025.p.58",
+   "cost": null
+  },
+  {
+   "pick": 56,
+   "round": 6,
+   "team_key": "2025.l.667109.t.5",
+   "player_key": "2025.p.79",
+   "cost": null
+  },
+  {
+   "pick": 57,
+   "round": 6,
+   "team_key": "2025.l.667109.t.4",
+   "player_key": "2025.p.84",
+   "cost": null
+  },
+  {
+   "pick": 58,
+   "round": 6,
+   "team_key": "2025.l.667109.t.3",
+   "player_key": "2025.p.86",
+   "cost": null
+  },
+  {
+   "pick": 59,
+   "round": 6,
+   "team_key": "2025.l.667109.t.2",
+   "player_key": "2025.p.73",
+   "cost": null
+  },
+  {
+   "pick": 60,
+   "round": 6,
+   "team_key": "2025.l.667109.t.1",
+   "player_key": "2025.p.65",
+   "cost": null
+  },
+  {
+   "pick": 61,
+   "round": 7,
+   "team_key": "2025.l.667109.t.1",
+   "player_key": "2025.p.81",
+   "cost": null
+  },
+  {
+   "pick": 62,
+   "round": 7,
+   "team_key": "2025.l.667109.t.2",
+   "player_key": "2025.p.78",
+   "cost": null
+  },
+  {
+   "pick": 63,
+   "round": 7,
+   "team_key": "2025.l.667109.t.3",
+   "player_key": "2025.p.75",
+   "cost": null
+  },
+  {
+   "pick": 64,
+   "round": 7,
+   "team_key": "2025.l.667109.t.4",
+   "player_key": "2025.p.80",
+   "cost": null
+  },
+  {
+   "pick": 65,
+   "round": 7,
+   "team_key": "2025.l.667109.t.5",
+   "player_key": "2025.p.93",
+   "cost": null
+  },
+  {
+   "pick": 66,
+   "round": 7,
+   "team_key": "2025.l.667109.t.6",
+   "player_key": "2025.p.76",
+   "cost": null
+  },
+  {
+   "pick": 67,
+   "round": 7,
+   "team_key": "2025.l.667109.t.7",
+   "player_key": "2025.p.71",
+   "cost": null
+  },
+  {
+   "pick": 68,
+   "round": 7,
+   "team_key": "2025.l.667109.t.8",
+   "player_key": "2025.p.57",
+   "cost": null
+  },
+  {
+   "pick": 69,
+   "round": 7,
+   "team_key": "2025.l.667109.t.9",
+   "player_key": "2025.p.72",
+   "cost": null
+  },
+  {
+   "pick": 70,
+   "round": 7,
+   "team_key": "2025.l.667109.t.10",
+   "player_key": "2025.p.114",
+   "cost": null
+  },
+  {
+   "pick": 71,
+   "round": 8,
+   "team_key": "2025.l.667109.t.10",
+   "player_key": "2025.p.74",
+   "cost": null
+  },
+  {
+   "pick": 72,
+   "round": 8,
+   "team_key": "2025.l.667109.t.9",
+   "player_key": "2025.p.83",
+   "cost": null
+  },
+  {
+   "pick": 73,
+   "round": 8,
+   "team_key": "2025.l.667109.t.8",
+   "player_key": "2025.p.110",
+   "cost": null
+  },
+  {
+   "pick": 74,
+   "round": 8,
+   "team_key": "2025.l.667109.t.7",
+   "player_key": "2025.p.101",
+   "cost": null
+  },
+  {
+   "pick": 75,
+   "round": 8,
+   "team_key": "2025.l.667109.t.6",
+   "player_key": "2025.p.70",
+   "cost": null
+  },
+  {
+   "pick": 76,
+   "round": 8,
+   "team_key": "2025.l.667109.t.5",
+   "player_key": "2025.p.87",
+   "cost": null
+  },
+  {
+   "pick": 77,
+   "round": 8,
+   "team_key": "2025.l.667109.t.4",
+   "player_key": "2025.p.41",
+   "cost": null
+  },
+  {
+   "pick": 78,
+   "round": 8,
+   "team_key": "2025.l.667109.t.3",
+   "player_key": "2025.p.157",
+   "cost": null
+  },
+  {
+   "pick": 79,
+   "round": 8,
+   "team_key": "2025.l.667109.t.2",
+   "player_key": "2025.p.67",
+   "cost": null
+  },
+  {
+   "pick": 80,
+   "round": 8,
+   "team_key": "2025.l.667109.t.1",
+   "player_key": "2025.p.97",
+   "cost": null
+  },
+  {
+   "pick": 81,
+   "round": 9,
+   "team_key": "2025.l.667109.t.1",
+   "player_key": "2025.p.105",
+   "cost": null
+  },
+  {
+   "pick": 82,
+   "round": 9,
+   "team_key": "2025.l.667109.t.2",
+   "player_key": "2025.p.98",
+   "cost": null
+  },
+  {
+   "pick": 83,
+   "round": 9,
+   "team_key": "2025.l.667109.t.3",
+   "player_key": "2025.p.128",
+   "cost": null
+  },
+  {
+   "pick": 84,
+   "round": 9,
+   "team_key": "2025.l.667109.t.4",
+   "player_key": "2025.p.158",
+   "cost": null
+  },
+  {
+   "pick": 85,
+   "round": 9,
+   "team_key": "2025.l.667109.t.5",
+   "player_key": "2025.p.139",
+   "cost": null
+  },
+  {
+   "pick": 86,
+   "round": 9,
+   "team_key": "2025.l.667109.t.6",
+   "player_key": "2025.p.85",
+   "cost": null
+  },
+  {
+   "pick": 87,
+   "round": 9,
+   "team_key": "2025.l.667109.t.7",
+   "player_key": "2025.p.133",
+   "cost": null
+  },
+  {
+   "pick": 88,
+   "round": 9,
+   "team_key": "2025.l.667109.t.8",
+   "player_key": "2025.p.91",
+   "cost": null
+  },
+  {
+   "pick": 89,
+   "round": 9,
+   "team_key": "2025.l.667109.t.9",
+   "player_key": "2025.p.77",
+   "cost": null
+  },
+  {
+   "pick": 90,
+   "round": 9,
+   "team_key": "2025.l.667109.t.10",
+   "player_key": "2025.p.159",
+   "cost": null
+  },
+  {
+   "pick": 91,
+   "round": 10,
+   "team_key": "2025.l.667109.t.10",
+   "player_key": "2025.p.100",
+   "cost": null
+  },
+  {
+   "pick": 92,
+   "round": 10,
+   "team_key": "2025.l.667109.t.9",
+   "player_key": "2025.p.14",
+   "cost": null
+  },
+  {
+   "pick": 93,
+   "round": 10,
+   "team_key": "2025.l.667109.t.8",
+   "player_key": "2025.p.34",
+   "cost": null
+  },
+  {
+   "pick": 94,
+   "round": 10,
+   "team_key": "2025.l.667109.t.7",
+   "player_key": "2025.p.155",
+   "cost": null
+  },
+  {
+   "pick": 95,
+   "round": 10,
+   "team_key": "2025.l.667109.t.6",
+   "player_key": "2025.p.152",
+   "cost": null
+  },
+  {
+   "pick": 96,
+   "round": 10,
+   "team_key": "2025.l.667109.t.5",
+   "player_key": "2025.p.55",
+   "cost": null
+  },
+  {
+   "pick": 97,
+   "round": 10,
+   "team_key": "2025.l.667109.t.4",
+   "player_key": "2025.p.109",
+   "cost": null
+  },
+  {
+   "pick": 98,
+   "round": 10,
+   "team_key": "2025.l.667109.t.3",
+   "player_key": "2025.p.160",
+   "cost": null
+  },
+  {
+   "pick": 99,
+   "round": 10,
+   "team_key": "2025.l.667109.t.2",
+   "player_key": "2025.p.88",
+   "cost": null
+  },
+  {
+   "pick": 100,
+   "round": 10,
+   "team_key": "2025.l.667109.t.1",
+   "player_key": "2025.p.151",
+   "cost": null
+  },
+  {
+   "pick": 101,
+   "round": 11,
+   "team_key": "2025.l.667109.t.1",
+   "player_key": "2025.p.120",
+   "cost": null
+  },
+  {
+   "pick": 102,
+   "round": 11,
+   "team_key": "2025.l.667109.t.2",
+   "player_key": "2025.p.116",
+   "cost": null
+  },
+  {
+   "pick": 103,
+   "round": 11,
+   "team_key": "2025.l.667109.t.3",
+   "player_key": "2025.p.138",
+   "cost": null
+  },
+  {
+   "pick": 104,
+   "round": 11,
+   "team_key": "2025.l.667109.t.4",
+   "player_key": "2025.p.107",
+   "cost": null
+  },
+  {
+   "pick": 105,
+   "round": 11,
+   "team_key": "2025.l.667109.t.5",
+   "player_key": "2025.p.125",
+   "cost": null
+  },
+  {
+   "pick": 106,
+   "round": 11,
+   "team_key": "2025.l.667109.t.6",
+   "player_key": "2025.p.26",
+   "cost": null
+  },
+  {
+   "pick": 107,
+   "round": 11,
+   "team_key": "2025.l.667109.t.7",
+   "player_key": "2025.p.104",
+   "cost": null
+  },
+  {
+   "pick": 108,
+   "round": 11,
+   "team_key": "2025.l.667109.t.8",
+   "player_key": "2025.p.94",
+   "cost": null
+  },
+  {
+   "pick": 109,
+   "round": 11,
+   "team_key": "2025.l.667109.t.9",
+   "player_key": "2025.p.102",
+   "cost": null
+  },
+  {
+   "pick": 110,
+   "round": 11,
+   "team_key": "2025.l.667109.t.10",
+   "player_key": "2025.p.112",
+   "cost": null
+  },
+  {
+   "pick": 111,
+   "round": 12,
+   "team_key": "2025.l.667109.t.10",
+   "player_key": "2025.p.89",
+   "cost": null
+  },
+  {
+   "pick": 112,
+   "round": 12,
+   "team_key": "2025.l.667109.t.9",
+   "player_key": "2025.p.90",
+   "cost": null
+  },
+  {
+   "pick": 113,
+   "round": 12,
+   "team_key": "2025.l.667109.t.8",
+   "player_key": "2025.p.121",
+   "cost": null
+  },
+  {
+   "pick": 114,
+   "round": 12,
+   "team_key": "2025.l.667109.t.7",
+   "player_key": "2025.p.115",
+   "cost": null
+  },
+  {
+   "pick": 115,
+   "round": 12,
+   "team_key": "2025.l.667109.t.6",
+   "player_key": "2025.p.126",
+   "cost": null
+  },
+  {
+   "pick": 116,
+   "round": 12,
+   "team_key": "2025.l.667109.t.5",
+   "player_key": "2025.p.124",
+   "cost": null
+  },
+  {
+   "pick": 117,
+   "round": 12,
+   "team_key": "2025.l.667109.t.4",
+   "player_key": "2025.p.103",
+   "cost": null
+  },
+  {
+   "pick": 118,
+   "round": 12,
+   "team_key": "2025.l.667109.t.3",
+   "player_key": "2025.p.108",
+   "cost": null
+  },
+  {
+   "pick": 119,
+   "round": 12,
+   "team_key": "2025.l.667109.t.2",
+   "player_key": "2025.p.99",
+   "cost": null
+  },
+  {
+   "pick": 120,
+   "round": 12,
+   "team_key": "2025.l.667109.t.1",
+   "player_key": "2025.p.111",
+   "cost": null
+  },
+  {
+   "pick": 121,
+   "round": 13,
+   "team_key": "2025.l.667109.t.1",
+   "player_key": "2025.p.50",
+   "cost": null
+  },
+  {
+   "pick": 122,
+   "round": 13,
+   "team_key": "2025.l.667109.t.2",
+   "player_key": "2025.p.118",
+   "cost": null
+  },
+  {
+   "pick": 123,
+   "round": 13,
+   "team_key": "2025.l.667109.t.3",
+   "player_key": "2025.p.92",
+   "cost": null
+  },
+  {
+   "pick": 124,
+   "round": 13,
+   "team_key": "2025.l.667109.t.4",
+   "player_key": "2025.p.161",
+   "cost": null
+  },
+  {
+   "pick": 125,
+   "round": 13,
+   "team_key": "2025.l.667109.t.5",
+   "player_key": "2025.p.148",
+   "cost": null
+  },
+  {
+   "pick": 126,
+   "round": 13,
+   "team_key": "2025.l.667109.t.6",
+   "player_key": "2025.p.162",
+   "cost": null
+  },
+  {
+   "pick": 127,
+   "round": 13,
+   "team_key": "2025.l.667109.t.7",
+   "player_key": "2025.p.143",
+   "cost": null
+  },
+  {
+   "pick": 128,
+   "round": 13,
+   "team_key": "2025.l.667109.t.8",
+   "player_key": "2025.p.106",
+   "cost": null
+  },
+  {
+   "pick": 129,
+   "round": 13,
+   "team_key": "2025.l.667109.t.9",
+   "player_key": "2025.p.141",
+   "cost": null
+  },
+  {
+   "pick": 130,
+   "round": 13,
+   "team_key": "2025.l.667109.t.10",
+   "player_key": "2025.p.163",
+   "cost": null
+  },
+  {
+   "pick": 131,
+   "round": 14,
+   "team_key": "2025.l.667109.t.10",
+   "player_key": "2025.p.20",
+   "cost": null
+  },
+  {
+   "pick": 132,
+   "round": 14,
+   "team_key": "2025.l.667109.t.9",
+   "player_key": "2025.p.164",
+   "cost": null
+  },
+  {
+   "pick": 133,
+   "round": 14,
+   "team_key": "2025.l.667109.t.8",
+   "player_key": "2025.p.165",
+   "cost": null
+  },
+  {
+   "pick": 134,
+   "round": 14,
+   "team_key": "2025.l.667109.t.7",
+   "player_key": "2025.p.166",
+   "cost": null
+  },
+  {
+   "pick": 135,
+   "round": 14,
+   "team_key": "2025.l.667109.t.6",
+   "player_key": "2025.p.167",
+   "cost": null
+  },
+  {
+   "pick": 136,
+   "round": 14,
+   "team_key": "2025.l.667109.t.5",
+   "player_key": "2025.p.168",
+   "cost": null
+  },
+  {
+   "pick": 137,
+   "round": 14,
+   "team_key": "2025.l.667109.t.4",
+   "player_key": "2025.p.123",
+   "cost": null
+  },
+  {
+   "pick": 138,
+   "round": 14,
+   "team_key": "2025.l.667109.t.3",
+   "player_key": "2025.p.130",
+   "cost": null
+  },
+  {
+   "pick": 139,
+   "round": 14,
+   "team_key": "2025.l.667109.t.2",
+   "player_key": "2025.p.27",
+   "cost": null
+  },
+  {
+   "pick": 140,
+   "round": 14,
+   "team_key": "2025.l.667109.t.1",
+   "player_key": "2025.p.54",
+   "cost": null
+  },
+  {
+   "pick": 141,
+   "round": 15,
+   "team_key": "2025.l.667109.t.1",
+   "player_key": "2025.p.10",
+   "cost": null
+  },
+  {
+   "pick": 142,
+   "round": 15,
+   "team_key": "2025.l.667109.t.2",
+   "player_key": "2025.p.16",
+   "cost": null
+  },
+  {
+   "pick": 143,
+   "round": 15,
+   "team_key": "2025.l.667109.t.3",
+   "player_key": "2025.p.96",
+   "cost": null
+  },
+  {
+   "pick": 144,
+   "round": 15,
+   "team_key": "2025.l.667109.t.4",
+   "player_key": "2025.p.42",
+   "cost": null
+  },
+  {
+   "pick": 145,
+   "round": 15,
+   "team_key": "2025.l.667109.t.2",
+   "player_key": "2025.p.142",
+   "cost": null
+  },
+  {
+   "pick": 146,
+   "round": 15,
+   "team_key": "2025.l.667109.t.6",
+   "player_key": "2025.p.169",
+   "cost": null
+  },
+  {
+   "pick": 147,
+   "round": 15,
+   "team_key": "2025.l.667109.t.7",
+   "player_key": "2025.p.13",
+   "cost": null
+  },
+  {
+   "pick": 148,
+   "round": 15,
+   "team_key": "2025.l.667109.t.8",
+   "player_key": "2025.p.61",
+   "cost": null
+  },
+  {
+   "pick": 149,
+   "round": 15,
+   "team_key": "2025.l.667109.t.9",
+   "player_key": "2025.p.170",
+   "cost": null
+  },
+  {
+   "pick": 150,
+   "round": 15,
+   "team_key": "2025.l.667109.t.10",
+   "player_key": "2025.p.95",
+   "cost": null
+  }
+ ],
+ "keepers": []
+}

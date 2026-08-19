@@ -203,9 +203,16 @@ class Assistant:
             position_demand = self._position_demand(current, future_picks, position_of)
 
             # What the picks so far say about how this room drifts from ADP -- the snake
-            # analog of the auction engine's live room premiums.
+            # analog of the auction engine's live room premiums. My own picks are
+            # excluded: they reflect this engine's advice, and a model that learns
+            # from its own output drifts wherever it was already leaning.
+            my_team = self.state.my_team
             tendencies = room_tendencies(
-                observations_from_board(self.state.board.values(), self.valuations.valuations)
+                observations_from_board(
+                    self.state.board.values(),
+                    self.valuations.valuations,
+                    exclude_team=my_team.team_key if my_team else None,
+                )
             )
 
             # Inputs the market simulator needs are copied under the lock; the

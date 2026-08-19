@@ -106,6 +106,27 @@ class TestCapture:
         assert loaded.my_team.team_key == record.my_team.team_key
         assert loaded.picks == record.picks
 
+    def test_keepers_round_trip_and_shape_the_board(self, world, tmp_path):
+        # A keeper league without its keepers round-trips into a keeper-free board:
+        # wrong pick counts, invented rounds, and kept studs sitting "available" all
+        # draft -- observed as impossible survivals on a real keeper-league record.
+        from ff_helper.yahoo.models import KeptPlayer
+
+        record, _ = world
+        team = record.teams[0]
+        kept = KeptPlayer(
+            player_key=record.picks[0].player_key, team_key=team.team_key, round=3
+        )
+        from dataclasses import replace
+
+        keeper_record = replace(record, keepers=(kept,), picks=record.picks[1:])
+        loaded = load_record(save_record(keeper_record, tmp_path / "keeper.json"))
+        assert loaded.keepers == (kept,)
+
+        _, state = build_state(loaded)
+        assert kept.player_key in state.drafted_player_keys
+        assert len(state.keepers) == 1
+
     def test_record_requires_settings(self, world):
         record, _ = world
         from dataclasses import replace

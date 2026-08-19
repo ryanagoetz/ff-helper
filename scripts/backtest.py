@@ -20,8 +20,11 @@ cached ranking snapshot. Three sections:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -120,6 +123,22 @@ def main() -> int:
         help="Survival model to calibrate",
     )
     args = parser.parse_args()
+
+    # This script never calls load_settings(), so .env (FF_HELPER_HOME, FF_MC_ROLLOUTS)
+    # would otherwise be silently ignored by the very tool that measures those knobs.
+    load_dotenv()
+
+    # One report, one engine. Every Assistant this run builds -- turn reports and the
+    # three counterfactual replays included -- follows --predictor, instead of half the
+    # report obeying whatever FF_MC_ROLLOUTS happened to be in the caller's shell.
+    if args.predictor == "mc":
+        from ff_helper import config
+
+        rollouts = config.mc_rollouts() or 300
+    else:
+        rollouts = 0
+    os.environ["FF_MC_ROLLOUTS"] = str(rollouts)
+    print(f"Engine: {'Monte Carlo, ' + str(rollouts) + ' rollouts' if rollouts else 'analytic'}")
 
     record = load_record(Path(args.file))
     league_key = record.snapshot_ref or record.league.league_key

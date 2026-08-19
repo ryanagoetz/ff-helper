@@ -139,7 +139,10 @@ def _my_choice(assistant: Assistant, policy: str, actual_key: str, drafted: set[
         available = assistant.available()
         if available:
             return max(available, key=lambda v: assistant.levels.vor(v)).player_key
-        return actual_key
+        # Same exhausted-pool rule as the engine branch: falling back to the actual
+        # pick is only legal if this replay has not already seated him elsewhere --
+        # a duplicate would inflate exactly the baseline the engine is compared to.
+        return actual_key if actual_key not in drafted else _fallback_by_adp(assistant, drafted)
     # policy == "engine"
     recommendations = assistant.snake_recommendations(limit=1)
     if recommendations:

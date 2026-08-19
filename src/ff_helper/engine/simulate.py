@@ -99,11 +99,15 @@ class SimulationResult:
     survival_counts: dict[str, int]
     # (position, tier, target pick) -> P(every available player of that tier is gone).
     tier_gone: dict[tuple[str, int, int], float]
-    # target pick -> per-rollout count of players removed by then. Every entry must
-    # equal the number of opponent picks in the window -- the invariant the analytic
-    # normalizer only approximates -- and the tests hold it to that.
+    # target pick -> per-rollout count of players removed by then. Every entry equals
+    # the number of opponent picks in the window -- the invariant the analytic
+    # normalizer only approximates -- capped at the pool size when the board is
+    # smaller than the window (nobody can remove players who do not exist).
     removed_counts: dict[int, tuple[int, ...]]
-    _expected_cache: dict[tuple, float] = field(default_factory=dict, repr=False)
+    # compare=False: a memo must never make two identical simulations unequal -- the
+    # generated __eq__ used to flip the moment either side answered its first query.
+    # (The class is not hashable either way; every bulk field is a dict.)
+    _expected_cache: dict[tuple, float] = field(default_factory=dict, repr=False, compare=False)
 
     def expected_at(
         self, position: str, rank: int, pick: int, exclude: str | None = None
@@ -117,7 +121,9 @@ class SimulationResult:
         if self.rollouts <= 0 or rank > self.max_rank:
             return None
         rows = self.survivors.get((position, pick))
-        if rows is None:
+        if not rows:
+            # Not simulated (unknown pick) or no rollout recorded it; never divide by
+            # an empty list -- absence of an answer must not crash the caller either.
             return None
         key = (position, rank, pick, exclude)
         cached = self._expected_cache.get(key)
@@ -245,12 +251,16 @@ def simulate_market(
 
     last = covered[-1]
     my_set = set(my_picks)
-    # Hazards depend only on the pick number and the player, so the whole table is
-    # computed once; per rollout only the need multipliers and availability vary.
+    # Hazards depend only on the pick number and the player, so the table is computed
+    # once -- and only for the reachable prefix of the ADP-sorted pool: the sampler
+    # reads the first ``candidate_pool`` unremoved players, and no more than the
+    # window's pick count can have been removed ahead of them, so deeper entries
+    # could never be read.
+    reach = min(npool, config.candidate_pool + (last - current_pick))
     hazard_rows = {
         n: [
             _pick_hazard(n, pool[i].adp + shift(positions[i]), pool[i].adp_stdev)
-            for i in range(npool)
+            for i in range(reach)
         ]
         for n in range(current_pick, last)
         if n not in my_set
@@ -288,22 +298,23 @@ def simulate_market(
     survivors: dict[tuple[str, int], list[tuple[str, ...]]] = {
         (position, target): [] for position in by_position for target in covered
     }
-    survival_counts = dict.fromkeys(keys, 0)
+    # Survival at the first target is counted by complement: the removals (at most one
+    # per pick) are a far smaller set than the pool scanned once per rollout.
+    gone_first = [0] * npool
     gone_counts = {(pos, tier, t): 0 for (pos, tier) in tier_members for t in covered}
     removed_lists: dict[int, list[int]] = {target: [] for target in covered}
     candidate_pool = config.candidate_pool
 
     for _ in range(rollouts):
         removed = bytearray(npool)
-        removed_total = 0
+        removed_order: list[int] = []
         counts = {team: dict(held) for team, held in team_rosters.items()}
         for n in range(current_pick, last + 1):
             if n in target_set:
-                removed_lists[n].append(removed_total)
+                removed_lists[n].append(len(removed_order))
                 if n == first:
-                    for i in range(npool):
-                        if not removed[i]:
-                            survival_counts[keys[i]] += 1
+                    for i in removed_order:
+                        gone_first[i] += 1
                 for position, indices in by_position.items():
                     row: list[str] = []
                     for i in indices:
@@ -321,13 +332,19 @@ def simulate_market(
                 # The plan DP owns my choices; simulating them here would double-model
                 # them and quietly fight whatever the plan decides.
                 continue
+            if len(removed_order) >= reach:
+                # Pool exhausted: nothing left for anyone to remove. Keep walking
+                # rather than break -- later targets must still be recorded, or their
+                # denominators drift from the rollout count and expected_at divides
+                # by an empty list.
+                continue
             hazards = hazard_rows[n]
             owner = pick_owner.get(n)
             needed = needed_positions(counts[owner]) if owner in counts else None
             total = 0.0
             candidate_indices: list[int] = []
             weights: list[float] = []
-            for i in range(npool):
+            for i in range(reach):
                 if removed[i]:
                     continue
                 weight = hazards[i]
@@ -339,7 +356,7 @@ def simulate_market(
                 if len(candidate_indices) == candidate_pool:
                     break
             if not candidate_indices:
-                break  # pool exhausted; nothing left for anyone to remove
+                continue  # defensive: same exhaustion case as above
             if total <= 0.0:
                 # Nobody in range is due yet; the best remaining by ADP is the default.
                 chosen = candidate_indices[0]
@@ -352,7 +369,7 @@ def simulate_market(
                         chosen = i
                         break
             removed[chosen] = 1
-            removed_total += 1
+            removed_order.append(chosen)
             if owner in counts:
                 team = counts[owner]
                 team[positions[chosen]] = team.get(positions[chosen], 0) + 1
@@ -364,7 +381,7 @@ def simulate_market(
         max_rank=config.max_rank,
         survivors=survivors,
         vor_of={keys[i]: max(0.0, levels.vor(pool[i])) for i in range(npool)},
-        survival_counts=survival_counts,
+        survival_counts={keys[i]: rollouts - gone_first[i] for i in range(npool)},
         tier_gone={key: count / rollouts for key, count in gone_counts.items()},
         removed_counts={target: tuple(values) for target, values in removed_lists.items()},
     )
