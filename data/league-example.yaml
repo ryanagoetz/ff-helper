@@ -59,6 +59,10 @@ team_aliases: {}
 
 # Team names as of the date you transcribed this. They can change up to the draft; if one
 # does, edit it here and in any keeper CSV, since both match on the name.
+#
+# In a SNAKE league the order of this list is the draft order -- slot 1 first -- and every
+# pick's owner is derived from it. Put your own team where you actually draft from. An
+# auction has no pick order, so the order is free there.
 my_team: "My Team"
 teams:
   - "Team 1"

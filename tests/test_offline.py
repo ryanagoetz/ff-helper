@@ -99,6 +99,51 @@ class TestLoadConfig:
         assert mine[0].name == "Team Ryan"
 
 
+class TestDraftSlots:
+    """Who owns pick 34 is derived from draft slots, so offline has to supply them.
+
+    The bug this pins: only your own team used to get a ``draft_position``. Every rival
+    pick then resolved to no team at all, so their rosters stayed empty and the
+    needs-aware survival model quietly did nothing -- the failure mode being advice that
+    looks entirely normal while ignoring half its inputs.
+    """
+
+    def _snake(self, tmp_path, **overrides):
+        return offline.load_config(_write(tmp_path, _config(draft_type="snake", **overrides)))
+
+    def test_every_team_gets_the_slot_it_sits_in(self, tmp_path):
+        result = self._snake(tmp_path)
+        assert [team.draft_position for team in result.teams] == list(range(1, 13))
+
+    def test_my_slot_is_my_position_in_the_list(self, tmp_path):
+        teams = ["Team 1", "Team 2", "Team Ryan"] + [f"Team {i}" for i in range(4, 13)]
+        result = self._snake(tmp_path, teams=teams)
+        mine = next(team for team in result.teams if team.is_mine)
+        assert mine.draft_position == 3
+
+    def test_generated_teams_are_also_slotted(self, tmp_path):
+        config = _config(draft_type="snake")
+        del config["teams"]
+        config["my_team"] = "Team 1"
+        result = offline.load_config(_write(tmp_path, config))
+        assert [team.draft_position for team in result.teams] == list(range(1, 13))
+
+    def test_an_auction_has_no_draft_order_to_imply(self, tmp_path):
+        """Nominations are not picks. Inventing slots here would put a team on the clock."""
+        result = offline.load_config(_write(tmp_path, _config()))
+        assert all(team.draft_position is None for team in result.teams)
+
+    def test_an_agreeing_draft_position_is_accepted(self, tmp_path):
+        teams = ["Team 1", "Team Ryan"] + [f"Team {i}" for i in range(3, 13)]
+        result = self._snake(tmp_path, teams=teams, draft_position=2)
+        assert next(t for t in result.teams if t.is_mine).draft_position == 2
+
+    def test_a_disagreeing_draft_position_is_refused(self, tmp_path):
+        """Silently trusting either one would misplace every pick you do not own."""
+        with pytest.raises(offline.OfflineConfigError, match="draft_position says 7"):
+            self._snake(tmp_path, draft_position=7)
+
+
 class TestLoudFailures:
     def test_missing_file(self, tmp_path):
         with pytest.raises(offline.OfflineConfigError, match="not found"):
@@ -114,6 +159,12 @@ class TestLoudFailures:
     def test_my_team_must_be_in_the_teams_list(self, tmp_path):
         with pytest.raises(offline.OfflineConfigError, match="not in the teams list"):
             offline.load_config(_write(tmp_path, _config(my_team="Somebody Else")))
+
+    def test_a_duplicated_my_team_name_is_refused(self, tmp_path):
+        """Which of the two is yours decides your slot, and there is no way to tell."""
+        teams = ["Team Ryan", "Team Ryan"] + [f"Team {i}" for i in range(3, 13)]
+        with pytest.raises(offline.OfflineConfigError, match="matches 2 teams"):
+            offline.load_config(_write(tmp_path, _config(teams=teams)))
 
     def test_team_count_must_match_num_teams(self, tmp_path):
         with pytest.raises(offline.OfflineConfigError, match="num_teams"):

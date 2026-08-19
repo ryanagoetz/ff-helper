@@ -179,10 +179,13 @@ def load_config(path: Path) -> OfflineLeague:
 
 
 def _build_teams(config: dict, league: League, num_teams: int, path: Path) -> list[Team]:
-    """Build the team list, and work out which one is yours.
+    """Build the team list, and work out which one is yours and where everyone drafts.
 
     Knowing which team is yours is not cosmetic: roster needs, budget, and max bid are all
     computed against it, so a config that does not say is rejected rather than guessed.
+
+    In a snake league the order of the list is the draft order, and every team is given
+    the slot it sits in.
     """
     names = config.get("teams") or [f"Team {index + 1}" for index in range(num_teams)]
     if len(names) != num_teams:
@@ -204,21 +207,54 @@ def _build_teams(config: dict, league: League, num_teams: int, path: Path) -> li
         raise OfflineConfigError(
             f"{path}: my_team {my_team!r} is not in the teams list ({', '.join(map(str, names))})."
         )
+    if matched.count(True) > 1:
+        raise OfflineConfigError(
+            f"{path}: my_team {my_team!r} matches {matched.count(True)} teams. In a snake "
+            "league the list position is the draft slot, so a duplicate name means your "
+            "slot is a coin toss -- rename one of them."
+        )
 
-    draft_position = config.get("draft_position")
+    # In a snake league every pick number belongs to a slot, and the board resolves the
+    # owner of a pick by matching that slot against draft_position. Setting it only for
+    # your own team leaves every rival pick attributed to nobody, which empties their
+    # rosters and switches the needs-aware survival model off without saying so. Online,
+    # Yahoo supplies a position for all of them; offline the list order is the draft
+    # order, so it can supply them here too.
+    #
+    # An auction has no pick order at all, so slots stay unset there rather than implying
+    # one the config never claimed.
+    is_snake = not (league.settings and league.settings.is_auction)
+    my_slot = matched.index(True) + 1
+
+    declared = config.get("draft_position")
+    if is_snake and declared not in (None, "") and int(declared) != my_slot:
+        raise OfflineConfigError(
+            f"{path}: draft_position says {int(declared)} but my_team {my_team!r} is "
+            f"{_ordinal(my_slot)} in the teams list. The list is the draft order, so "
+            "these have to agree -- move your team to the right position, or drop "
+            "draft_position and let the list speak."
+        )
+
     teams: list[Team] = []
     for index, label in enumerate(names):
-        is_mine = matched[index]
         teams.append(
             Team(
                 team_key=f"{league.league_key}.t.{index + 1}",
                 team_id=str(index + 1),
                 name=str(label),
-                is_mine=is_mine,
-                draft_position=int(draft_position) if is_mine and draft_position else None,
+                is_mine=matched[index],
+                draft_position=index + 1 if is_snake else None,
             )
         )
     return teams
+
+
+def _ordinal(number: int) -> str:
+    if 10 <= number % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
+    return f"{number}{suffix}"
 
 
 def players_from_rows(rows: list[SourceRow], league_key: str) -> list[YahooPlayer]:
