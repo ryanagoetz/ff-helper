@@ -1,0 +1,85 @@
+{
+  "fantasy_content": {
+    "league": [
+      {
+        "league_key": "461.l.123456",
+        "league_id": "123456",
+        "name": "Test Dynasty",
+        "num_teams": 12,
+        "season": "2026",
+        "draft_status": "postdraft",
+        "scoring_type": "head",
+        "current_week": "7",
+        "start_week": "1",
+        "end_week": "17",
+        "is_finished": 0
+      },
+      {
+        "scoreboard": {
+          "0": {
+            "matchups": {
+              "0": {
+                "matchup": {
+                  "week": "7",
+                  "status": "postevent",
+                  "is_playoffs": "0",
+                  "0": {
+                    "teams": {
+                      "0": {
+                        "team": [
+                          [
+                            { "team_key": "461.l.123456.t.1" },
+                            { "team_id": "1" },
+                            { "name": "Team Ryan" }
+                          ],
+                          { "team_points": { "coverage_type": "week", "week": "7", "total": "112.34" } },
+                          { "team_projected_points": { "coverage_type": "week", "week": "7", "total": "108.20" } }
+                        ]
+                      },
+                      "1": {
+                        "team": [
+                          [
+                            { "team_key": "461.l.123456.t.2" },
+                            { "team_id": "2" },
+                            { "name": "Rival Squad" }
+                          ],
+                          { "team_points": { "coverage_type": "week", "week": "7", "total": "98.06" } },
+                          { "team_projected_points": { "coverage_type": "week", "week": "7", "total": "121.75" } }
+                        ]
+                      },
+                      "count": 2
+                    }
+                  }
+                }
+              },
+              "1": {
+                "matchup": {
+                  "week": "7",
+                  "status": "preevent",
+                  "is_playoffs": "0",
+                  "teams": {
+                    "0": {
+                      "team": [
+                        [{ "team_key": "461.l.123456.t.3" }, { "name": "Third Team" }],
+                        { "team_projected_points": { "total": "104.50" } }
+                      ]
+                    },
+                    "1": {
+                      "team": [
+                        [{ "team_key": "461.l.123456.t.4" }, { "name": "Fourth Team" }],
+                        { "team_projected_points": { "total": "99.10" } }
+                      ]
+                    },
+                    "count": 2
+                  }
+                }
+              },
+              "count": 2
+            }
+          },
+          "week": "7"
+        }
+      }
+    ]
+  }
+}

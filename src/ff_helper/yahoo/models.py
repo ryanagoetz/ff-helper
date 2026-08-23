@@ -77,6 +77,18 @@ class LeagueSettings:
     stat_modifiers: dict[int, float]
     is_auction: bool
     auction_budget: int = DEFAULT_AUCTION_BUDGET
+    # In-season settings. All optional, because the draft path never needed them and an
+    # older league that does not publish one must not become unparseable. Raw Yahoo
+    # spellings are kept rather than normalized here -- ``season.schedule`` is the one
+    # place allowed to interpret them, the same way parse.py is the one place allowed to
+    # know how ugly Yahoo's JSON is.
+    waiver_type: str = ""  # "R" rolling list | "C" continual
+    waiver_rule: str = ""  # "gametime" | "continual" | "all" ...
+    uses_faab: bool = False
+    faab_budget: int | None = None
+    trade_end_date: str = ""  # ISO date, Yahoo's own spelling
+    playoff_start_week: int | None = None
+    num_playoff_teams: int | None = None
 
     @property
     def starting_slots(self) -> tuple[RosterSlot, ...]:
@@ -112,6 +124,12 @@ class League:
     draft_status: str  # "predraft" | "drafting" | "postdraft"
     scoring_type: str
     settings: LeagueSettings | None = None
+    # Where the season currently is. The draft path never asked, so these default to None
+    # and every in-season caller must handle their absence rather than assume week 1.
+    current_week: int | None = None
+    start_week: int | None = None
+    end_week: int | None = None
+    is_finished: bool = False
 
     @property
     def is_drafting(self) -> bool:
@@ -162,6 +180,72 @@ class KeptPlayer:
 
 
 @dataclass(frozen=True)
+class RosterEntry:
+    """A player on a roster *during* the season, with the slot he is actually in.
+
+    Deliberately a sibling of ``KeptPlayer`` rather than an extension of it. ``KeptPlayer``
+    is premised on "before a draft, the only way a player sits on a team is if they were
+    kept", which is what makes the keeper path safe to trust; that premise is false in
+    week 6. The field that matters here is ``selected_position``, which ``parse_roster``
+    discards because a keeper has no meaningful one.
+    """
+
+    player_key: str
+    team_key: str
+    week: int
+    # The slot Yahoo has him in: "QB", "W/R/T", "BN", "IR" ...
+    selected_position: str = ""
+
+    @property
+    def is_starting(self) -> bool:
+        return bool(self.selected_position) and self.selected_position not in BENCH_SLOTS
+
+
+@dataclass(frozen=True)
+class Matchup:
+    """One week's head-to-head, from one team's point of view.
+
+    Stored once per *team*, not once per pairing -- so both sides of a game appear as two
+    entries. Redundant on disk and worth it: every caller starts from "which team am I",
+    and a pairing representation makes that a search instead of a lookup.
+    """
+
+    week: int
+    team_key: str
+    opponent_key: str
+    points: float | None = None
+    opponent_points: float | None = None
+    projected_points: float | None = None
+    opponent_projected: float | None = None
+    is_playoffs: bool = False
+    status: str = ""  # "preevent" | "midevent" | "postevent"
+
+    @property
+    def is_final(self) -> bool:
+        return self.status == "postevent"
+
+
+@dataclass(frozen=True)
+class Transaction:
+    """A completed add/drop/trade. The waiver market's revealed preference.
+
+    ``bid`` is the winning FAAB amount where the league uses one -- the in-season analog of
+    an auction sale price, and the input that lets ``engine.auction.room_premiums`` learn
+    what this specific room overpays for.
+    """
+
+    transaction_key: str
+    type: str  # "add" | "drop" | "add/drop" | "trade" | "commish"
+    status: str
+    timestamp: float | None = None
+    added: tuple[str, ...] = ()  # player keys
+    dropped: tuple[str, ...] = ()
+    team_key: str = ""
+    bid: int | None = None
+    source_type: str = ""  # "waivers" | "freeagents"
+
+
+@dataclass(frozen=True)
 class DraftAnalysis:
     """Yahoo's own ADP data -- the single best predictor of a Yahoo draft room."""
 
@@ -182,6 +266,12 @@ class YahooPlayer:
     bye_week: int | None = None
     status: str = ""  # "" | "Q" | "O" | "IR" | "PUP" ...
     draft_analysis: DraftAnalysis = field(default_factory=DraftAnalysis)
+    # In-season detail. ``status`` alone says "Q" where a weekly decision wants to know
+    # *why* -- and percent_owned is the market's read on news, which is the earliest
+    # waiver signal there is.
+    status_full: str = ""  # "Questionable - Hamstring"
+    injury_note: str = ""
+    percent_owned: float | None = None
 
     @property
     def primary_position(self) -> str:
@@ -190,3 +280,24 @@ class YahooPlayer:
             if position not in BENCH_SLOTS:
                 return position
         return self.display_position
+
+    @property
+    def startable_positions(self) -> tuple[str, ...]:
+        """Every real position this player can be slotted at, not just the primary one.
+
+        Yahoo routinely lists a player as WR/RB, and that flexibility is exactly what a
+        lineup optimizer trades on -- collapsing it to ``primary_position`` throws away
+        the option before anything gets to use it.
+
+        Flex *slots* are stripped. Yahoo puts "W/R/T" in this list alongside "RB", but a
+        slot is not a position: which slots a player can fill is derived from his real
+        positions via ``FLEX_ELIGIBILITY``, and leaving the slot names in would let a
+        player claim a flex he is not actually eligible for in a league that spells its
+        flex differently.
+        """
+        real = tuple(
+            position
+            for position in self.eligible_positions
+            if position not in BENCH_SLOTS and position not in FLEX_ELIGIBILITY
+        )
+        return real or (self.display_position,)

@@ -21,9 +21,14 @@ from ff_helper.rankings.players import SourceRow
 from ff_helper.yahoo.models import DraftAnalysis, YahooPlayer
 
 # Version 2: SourceRow grew ecr_std (expert-rank spread, feeding projection variance).
-# Older snapshots are refused so the field is actually present, not silently None --
+# Version 3: YahooPlayer grew status_full, injury_note and percent_owned. ``_player_to_dict``
+#   serializes with ``asdict``, so those land in the file and a v2 snapshot silently reads
+#   them back as None/"" -- exactly the "a missing field can't read as None" case the
+#   version exists to prevent. The in-season path treats that as "no ownership signal, no
+#   injury detail" rather than as a stale file, which is the wrong answer quietly.
+# Older snapshots are refused so the fields are actually present, not silently None --
 # ``load`` degrades to "re-run scripts/fetch_rankings.py", which takes a minute.
-SNAPSHOT_VERSION = 2
+SNAPSHOT_VERSION = 3
 
 
 @dataclass
@@ -101,4 +106,11 @@ def _player_from_dict(entry: dict) -> YahooPlayer:
         bye_week=entry.get("bye_week"),
         status=entry.get("status", ""),
         draft_analysis=DraftAnalysis(**analysis),
+        # In-season fields. They default rather than being read positionally so this
+        # function stays total, but that is belt-and-braces only: SNAPSHOT_VERSION went to
+        # 3 when they were added, so ``load`` refuses any file old enough to be missing
+        # them and these defaults are unreachable for a real v2 snapshot.
+        status_full=entry.get("status_full", ""),
+        injury_note=entry.get("injury_note", ""),
+        percent_owned=entry.get("percent_owned"),
     )

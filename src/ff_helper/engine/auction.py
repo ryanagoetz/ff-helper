@@ -291,9 +291,9 @@ def _price_ladder(
 
     ``pool`` is the position's remaining players, best first by adjusted value. The top
     rung is the best player left at his going rate -- paying up is always one of the
-    choices, which is exactly what ``slot_price``'s reservation cannot express. Below it
+    choices, which is exactly what ``slot_ladder``'s reservation cannot express. Below it
     sit the settle rungs around ``demand_index`` (the player the league's remaining
-    demand realistically leaves me if I *don't* pay up -- what ``slot_price`` reserves)
+    demand realistically leaves me if I *don't* pay up -- where ``slot_ladder`` starts)
     and the last man standing at $1. The point is not price precision but *choice*: a
     plan decides per slot whether to pay up, settle, or punt, and two same-position
     slots sharing the top rung is an accepted approximation -- ladders choose depth,
@@ -468,9 +468,10 @@ def recommend_auction(
         return depth_multiplier(backups.get(position, 0) + 1, 1)
 
     # -- budget reservation: what filling each of my remaining slots will really cost.
-    # A starter slot reserves the going rate of the player I could realistically end up
-    # with (the k-th best remaining, because k other open league slots compete for the
-    # cheap ones); a bench slot reserves the $1 minimum, as the hard max_bid already does.
+    # A starter slot reserves the going rate of the players I could realistically end up
+    # with (from the k-th best remaining down, because k other open league slots compete
+    # for the cheap ones, and successive openings take successive players); a bench slot
+    # reserves the $1 minimum, as the hard max_bid already does.
     by_position: dict[str, list[PlayerValuation]] = {}
     for valuation in available:
         by_position.setdefault(valuation.position, []).append(valuation)
@@ -479,27 +480,70 @@ def recommend_auction(
 
     league_counts = league_position_counts or {}
 
-    def slot_price(position: str) -> float:
+    def demand_index_of(position: str) -> int:
+        """Index of the player the league's remaining demand realistically leaves me.
+
+        One definition, used by both the reservation (``slot_ladder``) and the budget plan
+        (``_price_ladder``). They priced the same slot by two different rules for a while;
+        since ``bid_to`` is a minimum over ``smart_cap`` and ``plan_bid``, that had the two
+        halves of the model pulling against each other on the same dollar.
+        """
+        return max(1, levels.starters_drafted.get(position, 0) - league_counts.get(position, 0)) - 1
+
+    def slot_ladder(position: str, count: int) -> list[float]:
+        """What each of ``count`` open slots at this position will really cost.
+
+        Two corrections over quoting one price per slot, both of which had the cap holding
+        back money for purchases that never cost that much:
+
+        **Successive slots get successive players.** Filling two open receiver slots does
+        not mean buying the best remaining receiver twice -- the second slot is filled by
+        whoever is left after the first. Quoting one price per slot reserved the top of the
+        market once per opening, which on a real board asked $66 of a $56 budget to cover
+        two slots that were eventually filled for $4.
+
+        **The demand index is deliberately the same one the plan uses.** An earlier version
+        also dropped ``demand``'s floor of 1, on the theory that a position whose league
+        starting slots are all filled is uncontested and clears at the minimum. That was
+        wrong twice over. ``starters_drafted`` counts league-wide *starting* slots while
+        ``league_counts`` counts every *rostered* player, bench included -- so bench depth
+        cancels starting slots and the branch fired from about 44% of a real draft onward
+        (measured: after sale 100 of 163, QB, RB, WR and TE all reserved $1), collapsing
+        the reservation and silently disabling the smart cap for the whole endgame. It also
+        put this function and ``_price_ladder`` on two different demand rules for the same
+        slot. Computing genuine unmet *starting* demand needs per-team counts, which this
+        function is not given; until it is, the floor stays and the two agree.
+        """
         pool = by_position.get(position)
         if not pool:
-            return float(MIN_BID)
-        demand = max(1, levels.starters_drafted.get(position, 0) - league_counts.get(position, 0))
-        chosen = pool[min(demand - 1, len(pool) - 1)]
-        price = expected_of.get(chosen.player_key)
-        if price is None:
-            price = adjusted_of[chosen.player_key]
-        return max(float(MIN_BID), price)
+            return [float(MIN_BID)] * count
+        ladder: list[float] = []
+        for offset in range(count):
+            chosen = pool[min(demand_index_of(position) + offset, len(pool) - 1)]
+            price = expected_of.get(chosen.player_key)
+            if price is None:
+                price = adjusted_of[chosen.player_key]
+            ladder.append(max(float(MIN_BID), price))
+        return ladder
 
-    slot_prices = {position: slot_price(position) for position in by_position}
-    flex_prices = [
-        min((slot_prices.get(p, float(MIN_BID)) for p in eligible), default=float(MIN_BID))
-        for eligible, _ in open_flex
+    # Reservation for each position's open dedicated slots, cheapest rung last.
+    dedicated_ladders = {
+        position: slot_ladder(position, count) for position, count in open_dedicated.items()
+    }
+    # A flex fills from whichever eligible position is cheapest, and its slots ladder for
+    # the same reason dedicated ones do -- two flex openings are two different players.
+    flex_ladders = [
+        min(
+            (slot_ladder(p, count) for p in eligible),
+            key=sum,
+            default=[float(MIN_BID)] * count,
+        )
+        for eligible, count in open_flex
     ]
 
-    starter_reserved = sum(
-        slot_prices.get(position, float(MIN_BID)) * count
-        for position, count in open_dedicated.items()
-    ) + sum(price * count for price, (_, count) in zip(flex_prices, open_flex, strict=True))
+    starter_reserved = sum(sum(rungs) for rungs in dedicated_ladders.values()) + sum(
+        sum(rungs) for rungs in flex_ladders
+    )
     starter_slots_open = sum(open_dedicated.values()) + sum(count for _, count in open_flex)
     my_open_slots = max(0, (settings.roster_size or 0) - sum(roster_counts.values()))
     bench_open = max(0, my_open_slots - starter_slots_open)
@@ -508,17 +552,23 @@ def recommend_auction(
     def smart_cap_for(position: str) -> int:
         if my_budget_remaining is None:
             return my_max_bid
-        # The candidate himself fills one open slot, so its reservation is released.
+        # The candidate himself fills one open slot, so its reservation is released -- and
+        # the rung released is the *cheapest* one, not the dearest. Buying him leaves one
+        # fewer opening, so the ladder loses its last rung: with rungs [40, 30] the
+        # reservation drops 70 -> 40, a release of 30. Releasing the first rung instead
+        # overstated spendable by the rung spread on every position with two or more open
+        # slots, which is the cap authorising more than the plan behind it can fund.
         if open_dedicated.get(position, 0) > 0:
-            released = slot_prices.get(position, float(MIN_BID))
+            rungs = dedicated_ladders.get(position) or [float(MIN_BID)]
+            released = rungs[-1]
         else:
             flex_hits = [
-                price
-                for price, (eligible, count) in zip(flex_prices, open_flex, strict=True)
-                if position in eligible and count > 0
+                rungs[-1]
+                for rungs, (eligible, count) in zip(flex_ladders, open_flex, strict=True)
+                if position in eligible and count > 0 and rungs
             ]
             if flex_hits:
-                released = flex_hits[0]
+                released = min(flex_hits)
             elif bench_open > 0:
                 released = float(MIN_BID)
             else:
@@ -544,8 +594,7 @@ def recommend_auction(
         ladder_of = {
             position: _price_ladder(
                 pool,
-                max(1, levels.starters_drafted.get(position, 0) - league_counts.get(position, 0))
-                - 1,
+                demand_index_of(position),
                 expected_of,
                 adjusted_of,
             )
@@ -631,8 +680,18 @@ def recommend_auction(
 
         # You cannot win a player whose going rate is above your ceiling, however much you
         # like him. Rank those below everyone you can actually buy.
+        #
+        # Only a price from *outside* me can say I am priced out. With no market signal
+        # ``expected_price`` falls back to my own inflation-adjusted worth, and "I value
+        # him above my remaining budget" is a different statement from "I cannot win him"
+        # -- reading the first as the second is circular, and the more a player was worth
+        # to me the further down he sorted. Late in a draft nearly every player has lost
+        # his market signal, which is where it bit: a back worth $31 to me, who sold for
+        # $14, ranked 214th of 457. Unknown price is treated as no evidence, not as bad
+        # evidence; ``bid_to`` is still a minimum against ``my_max_bid``, so nothing here
+        # can recommend a bid that cannot be made.
         expected_price = market if market is not None else adjusted
-        affordable = expected_price <= my_max_bid
+        affordable = market is None or market <= my_max_bid
 
         if plan_mode and market is not None:
             # His value plus the plan with him bought, against the plan without him.
@@ -710,8 +769,35 @@ def recommend_auction(
 
     # Unaffordable players sort below every attainable one whatever their score says --
     # a tuple key, not a score offset, so no magic constant can ever be outscored.
-    recommendations.sort(key=lambda r: (not r.affordable, -r.score))
+    #
+    # ``bid_to == 0`` leads, and it is a stricter test than ``affordable``: that flag asks
+    # only whether the *hard* ceiling covers his price, while bid_to also carries the smart
+    # cap and the budget plan. The two come apart exactly when money is tight, which is
+    # when the list matters most -- a room where eleven of the top twelve rows read "bid
+    # $0" is not a short list, and the players you can actually buy fall off the bottom of
+    # it. Ranking, not valuation: nothing about what a player is worth changes here.
+    recommendations.sort(key=rank_key)
     return recommendations[:limit]
+
+
+def rank_key(recommendation: AuctionRecommendation) -> tuple[bool, bool, float]:
+    """Display order for the short list. Named so a backtest can A/B it.
+
+    ``bid_to <= 0`` leads, and it is a stricter test than ``affordable``: that flag asks
+    only whether the hard ceiling covers his going rate, while ``bid_to`` also carries the
+    smart cap and the budget plan. The two come apart exactly when money is tight, which
+    is when the list matters most -- a room where eleven of the top twelve rows read "bid
+    $0" is not a short list, and the players you can actually buy fall off the bottom.
+
+    ``affordable`` still ranks below that, but only where a market price exists to make it
+    a real statement; see where it is computed for why an unknown price must count as no
+    evidence rather than as unaffordable.
+    """
+    return (
+        recommendation.bid_to <= 0,
+        not recommendation.affordable,
+        -recommendation.score,
+    )
 
 
 def _explain(
@@ -736,11 +822,17 @@ def _explain(
     parts: list[str] = []
 
     if not affordable:
-        # market can be absent (Yahoo publishes no auction cost for deep players and no
-        # priced neighbor may exist to interpolate from), in which case our own valuation
-        # is the best estimate of what he will go for.
-        basis = "goes for about" if market is not None else "worth about"
-        parts.append(f"{basis} ${expected_price:.0f}, above your ${my_max_bid} ceiling")
+        # ``affordable`` is now set only from an exogenous market price, so this arm always
+        # has one -- see where it is computed for why an unknown price cannot demote.
+        parts.append(f"goes for about ${market:.0f}, above your ${my_max_bid} ceiling")
+    elif market is None and _dollars(adjusted) > my_max_bid:
+        # No published price, so this is deliberately not a claim about what he will cost
+        # -- but a player worth several times the ceiling still needs saying, and the
+        # ranking no longer demotes him for it. Without this the row reads as an ordinary
+        # buy and renders undimmed next to players you can actually take.
+        parts.append(
+            f"worth about ${adjusted:.0f}, over your ${my_max_bid} ceiling (no market price)"
+        )
     elif surplus is not None and surplus >= 5:
         parts.append(f"worth ${adjusted:.0f}, room pays about ${market:.0f}")
     elif surplus is not None and surplus <= -5:

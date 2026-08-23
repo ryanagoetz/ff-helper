@@ -1,0 +1,90 @@
+{
+  "fantasy_content": {
+    "team": [
+      [
+        { "team_key": "461.l.123456.t.1" },
+        { "team_id": "1" },
+        { "name": "Team Ryan" }
+      ],
+      {
+        "roster": {
+          "0": {
+            "players": {
+              "0": {
+                "player": [
+                  [
+                    { "player_key": "461.p.100001" },
+                    { "player_id": "100001" },
+                    { "name": { "full": "Ja'Marr Chase" } },
+                    { "editorial_team_abbr": "Cin" },
+                    { "display_position": "WR" },
+                    { "eligible_positions": [{ "position": "WR" }] },
+                    { "status": "Q" },
+                    { "status_full": "Questionable - Hamstring" }
+                  ],
+                  { "selected_position": [{ "coverage_type": "week", "week": "7" }, { "position": "WR" }] }
+                ]
+              },
+              "1": {
+                "player": [
+                  [
+                    { "player_key": "461.p.100002" },
+                    { "player_id": "100002" },
+                    { "name": { "full": "Kenneth Walker III" } },
+                    { "editorial_team_abbr": "Sea" },
+                    { "display_position": "RB" },
+                    { "eligible_positions": [{ "position": "RB" }, { "position": "W/R/T" }] }
+                  ],
+                  { "selected_position": [{ "coverage_type": "week", "week": "7" }, { "position": "W/R/T" }] }
+                ]
+              },
+              "2": {
+                "player": [
+                  [
+                    { "player_key": "461.p.100003" },
+                    { "player_id": "100003" },
+                    { "name": { "full": "Rome Odunze" } },
+                    { "editorial_team_abbr": "Chi" },
+                    { "display_position": "WR" },
+                    { "eligible_positions": [{ "position": "WR" }] }
+                  ],
+                  { "selected_position": [{ "coverage_type": "week", "week": "7" }, { "position": "BN" }] }
+                ]
+              },
+              "3": {
+                "player": [
+                  [
+                    { "player_key": "461.p.100004" },
+                    { "player_id": "100004" },
+                    { "name": { "full": "Injured Reserve Guy" } },
+                    { "editorial_team_abbr": "Den" },
+                    { "display_position": "RB" },
+                    { "eligible_positions": [{ "position": "RB" }] },
+                    { "status": "IR" }
+                  ],
+                  { "selected_position": [{ "coverage_type": "week", "week": "7" }, { "position": "IR" }] }
+                ]
+              },
+              "4": {
+                "player": [
+                  [
+                    { "player_key": "461.p.100005" },
+                    { "player_id": "100005" },
+                    { "name": { "full": "No Slot Reported" } },
+                    { "editorial_team_abbr": "Was" },
+                    { "display_position": "TE" },
+                    { "eligible_positions": [{ "position": "TE" }] }
+                  ]
+                ]
+              },
+              "count": 5
+            }
+          },
+          "coverage_type": "week",
+          "week": "7",
+          "is_editable": 1
+        }
+      }
+    ]
+  }
+}

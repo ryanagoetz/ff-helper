@@ -22,13 +22,23 @@ from ff_helper.backtest.capture import (
     record_from_live,
     save_record,
 )
-from ff_helper.backtest.counterfactual import POLICIES, counterfactual
+from ff_helper.backtest.counterfactual import (
+    AUCTION_POLICIES,
+    POLICIES,
+    auction_counterfactual,
+    counterfactual,
+)
 from ff_helper.draft.state import DraftState
-from ff_helper.engine import lineup
+from ff_helper.engine import auction, lineup
 from ff_helper.yahoo.models import DraftPick
 from tests.helpers import NUM_TEAMS, build_league, build_snapshot, build_teams
 
 SEED = 42
+
+# A descending price schedule for one team's fifteen buys. Sums to 196 of a 200 budget,
+# so a replay that overspends by even a few dollars shows up as an illegal roster rather
+# than passing quietly.
+AUCTION_PRICES = (60, 40, 25, 20, 15, 10, 8, 5, 4, 3, 2, 1, 1, 1, 1)
 
 
 def synthesize_record(seed: int = SEED) -> DraftRecord:
@@ -78,9 +88,36 @@ def synthesize_record(seed: int = SEED) -> DraftRecord:
     return record_from_live(league, teams, picks)
 
 
+def synthesize_auction_record(seed: int = SEED) -> DraftRecord:
+    """The same seeded draft, re-read as an auction with a price on every sale.
+
+    Reusing the snake draft keeps the rosters legal and the fixture cheap; only the
+    settings flag and the costs differ, which is all the auction path reads.
+    """
+    import dataclasses
+
+    record = synthesize_record(seed)
+    settings = dataclasses.replace(record.league.settings, is_auction=True)
+    league = dataclasses.replace(record.league, settings=settings)
+
+    spend: dict[str, int] = {}
+    priced: list[DraftPick] = []
+    for pick in sorted(record.picks):
+        nth = spend.get(pick.team_key, 0)
+        cost = AUCTION_PRICES[min(nth, len(AUCTION_PRICES) - 1)]
+        spend[pick.team_key] = nth + 1
+        priced.append(dataclasses.replace(pick, cost=cost))
+    return record_from_live(league, list(record.teams), priced)
+
+
 @pytest.fixture(scope="module")
 def world():
     return synthesize_record(), build_snapshot()
+
+
+@pytest.fixture(scope="module")
+def auction_world():
+    return synthesize_auction_record(), build_snapshot()
 
 
 def fresh_assistant(record: DraftRecord) -> Assistant:
@@ -251,3 +288,96 @@ class TestCounterfactual:
         record, snapshot = world
         with pytest.raises(ValueError):
             counterfactual(record, snapshot, policy="yolo")
+
+
+@pytest.fixture(scope="module")
+def auction_results(auction_world):
+    record, snapshot = auction_world
+    return {
+        policy: auction_counterfactual(record, snapshot, policy=policy)
+        for policy in AUCTION_POLICIES
+    }
+
+
+class TestAuctionCounterfactual:
+    def test_every_policy_leaves_with_a_full_roster(self, auction_results, auction_world):
+        # The point of the endgame fill: a policy must not be allowed to "win" by
+        # passing on everything and scoring its empty slots as zero.
+        record, _ = auction_world
+        roster_size = record.league.settings.roster_size
+        for policy, result in auction_results.items():
+            assert len(result.players) == roster_size, policy
+
+    def test_no_policy_outspends_the_budget(self, auction_results, auction_world):
+        record, _ = auction_world
+        budget = record.league.settings.auction_budget
+        for policy, result in auction_results.items():
+            assert result.spent <= budget, policy
+
+    def test_actual_reproduces_the_recorded_roster(self, auction_results, auction_world):
+        # The control: if replaying history does not give history back, every other
+        # policy's delta is measured against the wrong baseline.
+        record, _ = auction_world
+        mine = record.my_team.team_key
+        recorded = sorted(pick.pick for pick in record.picks if pick.team_key == mine)
+        replayed = sorted(pick_number for pick_number, _, _ in auction_results["actual"].players)
+        assert replayed == recorded
+        assert auction_results["actual"].spent == sum(
+            pick.cost or 0 for pick in record.picks if pick.team_key == mine
+        )
+
+    def test_snake_record_is_refused(self, world):
+        record, snapshot = world
+        with pytest.raises(ValueError, match="auction"):
+            auction_counterfactual(record, snapshot, policy="actual")
+
+    def test_unknown_policy_rejected(self, auction_world):
+        record, snapshot = auction_world
+        with pytest.raises(ValueError):
+            auction_counterfactual(record, snapshot, policy="yolo")
+
+    def test_follow_from_replays_history_verbatim_before_the_cutoff(self, auction_world):
+        # Everything before the hand-over must match `actual` exactly, or the "given the
+        # hole I had already dug" question is being asked about a different hole.
+        record, snapshot = auction_world
+        mine = record.my_team.team_key
+        cutoff = max(pick.pick for pick in record.picks) // 2
+        result = auction_counterfactual(record, snapshot, policy="engine", follow_from=cutoff)
+
+        early = {pick.pick for pick in record.picks if pick.team_key == mine and pick.pick < cutoff}
+        held = {pick_number for pick_number, _, _ in result.players}
+        assert early <= held, "a pre-cutoff buy of mine went missing"
+        assert len(result.players) == record.league.settings.roster_size
+
+    def test_follow_from_none_lets_the_policy_choose_from_the_first_sale(self, auction_world):
+        # The complement: with no hand-over the policy owns every decision, so its roster
+        # must be free to diverge from mine. If these matched, follow_from would be inert.
+        record, snapshot = auction_world
+        free = auction_counterfactual(record, snapshot, policy="best_par")
+        actual = auction_counterfactual(record, snapshot, policy="actual")
+        assert {p for p, _, _ in free.players} != {p for p, _, _ in actual.players}
+
+
+class TestAuctionRankKey:
+    def test_zero_bid_sorts_below_a_buyable_player(self):
+        # The defect this key exists to prevent: a high-scoring player the plan prices
+        # at $0 crowding out one you can actually buy.
+        buyable = _fake_recommendation(bid_to=9, affordable=True, score=1.0)
+        unbuyable = _fake_recommendation(bid_to=0, affordable=True, score=99.0)
+        assert sorted([unbuyable, buyable], key=auction.rank_key) == [buyable, unbuyable]
+
+    def test_score_still_orders_players_you_can_buy(self):
+        low = _fake_recommendation(bid_to=5, affordable=True, score=1.0)
+        high = _fake_recommendation(bid_to=5, affordable=True, score=50.0)
+        assert sorted([low, high], key=auction.rank_key) == [high, low]
+
+
+def _fake_recommendation(*, bid_to: int, affordable: bool, score: float):
+    class _R:
+        pass
+
+    r = _R()
+    r.bid_to = bid_to
+    r.affordable = affordable
+    r.score = score
+    return r

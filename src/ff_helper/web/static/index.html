@@ -370,7 +370,7 @@ function renderRecommendations(data) {
 
   $("altHead").innerHTML = auction ? AUCTION_COLUMNS : SNAKE_COLUMNS;
   $("altBody").innerHTML = list.slice(1).map(r => auction ? `
-    <tr${r.affordable ? "" : ' style="opacity:.5"'}>
+    <tr${r.bid_to > 0 && r.affordable ? "" : ' style="opacity:.5"'}>
       <td>${r.name}${r.status ? ` <span class="flag">${r.status}</span>` : ""}</td>
       <td>${posTag(r.position)}</td>
       <td class="num">$${r.value}</td>

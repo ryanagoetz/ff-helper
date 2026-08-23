@@ -1,0 +1,1418 @@
+{
+ "version": 1,
+ "snapshot_ref": "offline.l.107878",
+ "league": {
+  "league_key": "offline.l.107878",
+  "league_id": "107878",
+  "name": "League 107878",
+  "num_teams": 12,
+  "season": "2026",
+  "draft_status": "predraft",
+  "scoring_type": "head"
+ },
+ "settings": {
+  "roster_slots": [
+   [
+    "QB",
+    1
+   ],
+   [
+    "WR",
+    2
+   ],
+   [
+    "RB",
+    2
+   ],
+   [
+    "TE",
+    1
+   ],
+   [
+    "W/R/T",
+    1
+   ],
+   [
+    "K",
+    1
+   ],
+   [
+    "DEF",
+    1
+   ],
+   [
+    "BN",
+    6
+   ],
+   [
+    "IR",
+    1
+   ]
+  ],
+  "stat_modifiers": {
+   "4": 0.04,
+   "5": 4.0,
+   "6": -1.0,
+   "9": 0.1,
+   "10": 6.0,
+   "11": 0.5,
+   "12": 0.1,
+   "13": 6.0,
+   "15": 6.0,
+   "16": 2.0,
+   "18": -2.0
+  },
+  "is_auction": true,
+  "auction_budget": 200
+ },
+ "teams": [
+  {
+   "team_key": "offline.l.107878.t.1",
+   "team_id": "1",
+   "name": "Team 1",
+   "is_mine": false,
+   "draft_position": null
+  },
+  {
+   "team_key": "offline.l.107878.t.2",
+   "team_id": "2",
+   "name": "Team 2",
+   "is_mine": false,
+   "draft_position": null
+  },
+  {
+   "team_key": "offline.l.107878.t.3",
+   "team_id": "3",
+   "name": "Team 3",
+   "is_mine": false,
+   "draft_position": null
+  },
+  {
+   "team_key": "offline.l.107878.t.4",
+   "team_id": "4",
+   "name": "Team 4",
+   "is_mine": false,
+   "draft_position": null
+  },
+  {
+   "team_key": "offline.l.107878.t.5",
+   "team_id": "5",
+   "name": "Team 5",
+   "is_mine": false,
+   "draft_position": null
+  },
+  {
+   "team_key": "offline.l.107878.t.6",
+   "team_id": "6",
+   "name": "Team 6",
+   "is_mine": false,
+   "draft_position": null
+  },
+  {
+   "team_key": "offline.l.107878.t.7",
+   "team_id": "7",
+   "name": "Team 7",
+   "is_mine": false,
+   "draft_position": null
+  },
+  {
+   "team_key": "offline.l.107878.t.8",
+   "team_id": "8",
+   "name": "Team 8",
+   "is_mine": false,
+   "draft_position": null
+  },
+  {
+   "team_key": "offline.l.107878.t.9",
+   "team_id": "9",
+   "name": "Team 9",
+   "is_mine": true,
+   "draft_position": null
+  },
+  {
+   "team_key": "offline.l.107878.t.10",
+   "team_id": "10",
+   "name": "Team 10",
+   "is_mine": false,
+   "draft_position": null
+  },
+  {
+   "team_key": "offline.l.107878.t.11",
+   "team_id": "11",
+   "name": "Team 11",
+   "is_mine": false,
+   "draft_position": null
+  },
+  {
+   "team_key": "offline.l.107878.t.12",
+   "team_id": "12",
+   "name": "Team 12",
+   "is_mine": false,
+   "draft_position": null
+  }
+ ],
+ "picks": [
+  {
+   "pick": 1,
+   "round": 1,
+   "team_key": "offline.l.107878.t.6",
+   "player_key": "offline.l.107878.p.brockbowers",
+   "cost": 43
+  },
+  {
+   "pick": 2,
+   "round": 1,
+   "team_key": "offline.l.107878.t.9",
+   "player_key": "offline.l.107878.p.christianmccaffrey",
+   "cost": 62
+  },
+  {
+   "pick": 3,
+   "round": 1,
+   "team_key": "offline.l.107878.t.9",
+   "player_key": "offline.l.107878.p.jahmyrgibbs",
+   "cost": 82
+  },
+  {
+   "pick": 4,
+   "round": 1,
+   "team_key": "offline.l.107878.t.5",
+   "player_key": "offline.l.107878.p.pukanacua",
+   "cost": 61
+  },
+  {
+   "pick": 5,
+   "round": 1,
+   "team_key": "offline.l.107878.t.12",
+   "player_key": "offline.l.107878.p.ceedeelamb",
+   "cost": 59
+  },
+  {
+   "pick": 6,
+   "round": 1,
+   "team_key": "offline.l.107878.t.1",
+   "player_key": "offline.l.107878.p.jeremiyahlove",
+   "cost": 30
+  },
+  {
+   "pick": 7,
+   "round": 1,
+   "team_key": "offline.l.107878.t.2",
+   "player_key": "offline.l.107878.p.bijanrobinson",
+   "cost": 87
+  },
+  {
+   "pick": 8,
+   "round": 1,
+   "team_key": "offline.l.107878.t.8",
+   "player_key": "offline.l.107878.p.jonathantaylor",
+   "cost": 76
+  },
+  {
+   "pick": 9,
+   "round": 1,
+   "team_key": "offline.l.107878.t.6",
+   "player_key": "offline.l.107878.p.joshallen",
+   "cost": 46
+  },
+  {
+   "pick": 11,
+   "round": 1,
+   "team_key": "offline.l.107878.t.5",
+   "player_key": "offline.l.107878.p.jacorycroskeymerritt",
+   "cost": 12
+  },
+  {
+   "pick": 12,
+   "round": 1,
+   "team_key": "offline.l.107878.t.3",
+   "player_key": "offline.l.107878.p.jamescook",
+   "cost": 63
+  },
+  {
+   "pick": 13,
+   "round": 2,
+   "team_key": "offline.l.107878.t.3",
+   "player_key": "offline.l.107878.p.treymcbride",
+   "cost": 30
+  },
+  {
+   "pick": 14,
+   "round": 2,
+   "team_key": "offline.l.107878.t.4",
+   "player_key": "offline.l.107878.p.maliknabers",
+   "cost": 27
+  },
+  {
+   "pick": 15,
+   "round": 2,
+   "team_key": "offline.l.107878.t.6",
+   "player_key": "offline.l.107878.p.jamarrchase",
+   "cost": 85
+  },
+  {
+   "pick": 16,
+   "round": 2,
+   "team_key": "offline.l.107878.t.8",
+   "player_key": "offline.l.107878.p.amonrastbrown",
+   "cost": 76
+  },
+  {
+   "pick": 17,
+   "round": 2,
+   "team_key": "offline.l.107878.t.7",
+   "player_key": "offline.l.107878.p.saquonbarkley",
+   "cost": 55
+  },
+  {
+   "pick": 18,
+   "round": 2,
+   "team_key": "offline.l.107878.t.4",
+   "player_key": "offline.l.107878.p.zayflowers",
+   "cost": 27
+  },
+  {
+   "pick": 19,
+   "round": 2,
+   "team_key": "offline.l.107878.t.10",
+   "player_key": "offline.l.107878.p.drakelondon",
+   "cost": 45
+  },
+  {
+   "pick": 20,
+   "round": 2,
+   "team_key": "offline.l.107878.t.5",
+   "player_key": "offline.l.107878.p.georgekittle",
+   "cost": 5
+  },
+  {
+   "pick": 21,
+   "round": 2,
+   "team_key": "offline.l.107878.t.6",
+   "player_key": "offline.l.107878.p.laramsdefense",
+   "cost": 7
+  },
+  {
+   "pick": 22,
+   "round": 2,
+   "team_key": "offline.l.107878.t.11",
+   "player_key": "offline.l.107878.p.ajbrown",
+   "cost": 40
+  },
+  {
+   "pick": 23,
+   "round": 2,
+   "team_key": "offline.l.107878.t.1",
+   "player_key": "offline.l.107878.p.kennethwalker",
+   "cost": 52
+  },
+  {
+   "pick": 24,
+   "round": 2,
+   "team_key": "offline.l.107878.t.2",
+   "player_key": "offline.l.107878.p.justinjefferson",
+   "cost": 62
+  },
+  {
+   "pick": 25,
+   "round": 3,
+   "team_key": "offline.l.107878.t.3",
+   "player_key": "offline.l.107878.p.houstondefense",
+   "cost": 5
+  },
+  {
+   "pick": 26,
+   "round": 3,
+   "team_key": "offline.l.107878.t.10",
+   "player_key": "offline.l.107878.p.ashtonjeanty",
+   "cost": 59
+  },
+  {
+   "pick": 27,
+   "round": 3,
+   "team_key": "offline.l.107878.t.4",
+   "player_key": "offline.l.107878.p.devonachane",
+   "cost": 36
+  },
+  {
+   "pick": 28,
+   "round": 3,
+   "team_key": "offline.l.107878.t.6",
+   "player_key": "offline.l.107878.p.keatonmitchell",
+   "cost": 2
+  },
+  {
+   "pick": 29,
+   "round": 3,
+   "team_key": "offline.l.107878.t.3",
+   "player_key": "offline.l.107878.p.jalenhurts",
+   "cost": 8
+  },
+  {
+   "pick": 30,
+   "round": 3,
+   "team_key": "offline.l.107878.t.10",
+   "player_key": "offline.l.107878.p.calebwilliams",
+   "cost": 10
+  },
+  {
+   "pick": 31,
+   "round": 3,
+   "team_key": "offline.l.107878.t.5",
+   "player_key": "offline.l.107878.p.omarionhampton",
+   "cost": 44
+  },
+  {
+   "pick": 32,
+   "round": 3,
+   "team_key": "offline.l.107878.t.8",
+   "player_key": "offline.l.107878.p.kylepitts",
+   "cost": 6
+  },
+  {
+   "pick": 33,
+   "round": 3,
+   "team_key": "offline.l.107878.t.3",
+   "player_key": "offline.l.107878.p.harrisonmevis",
+   "cost": 3
+  },
+  {
+   "pick": 34,
+   "round": 3,
+   "team_key": "offline.l.107878.t.4",
+   "player_key": "offline.l.107878.p.camskattebo",
+   "cost": 19
+  },
+  {
+   "pick": 35,
+   "round": 3,
+   "team_key": "offline.l.107878.t.7",
+   "player_key": "offline.l.107878.p.nicocollins",
+   "cost": 54
+  },
+  {
+   "pick": 36,
+   "round": 3,
+   "team_key": "offline.l.107878.t.11",
+   "player_key": "offline.l.107878.p.emekaegbuka",
+   "cost": 23
+  },
+  {
+   "pick": 37,
+   "round": 4,
+   "team_key": "offline.l.107878.t.4",
+   "player_key": "offline.l.107878.p.derrickhenry",
+   "cost": 39
+  },
+  {
+   "pick": 38,
+   "round": 4,
+   "team_key": "offline.l.107878.t.3",
+   "player_key": "offline.l.107878.p.teehiggins",
+   "cost": 27
+  },
+  {
+   "pick": 39,
+   "round": 4,
+   "team_key": "offline.l.107878.t.3",
+   "player_key": "offline.l.107878.p.devontasmith",
+   "cost": 27
+  },
+  {
+   "pick": 40,
+   "round": 4,
+   "team_key": "offline.l.107878.t.10",
+   "player_key": "offline.l.107878.p.kyrenwilliams",
+   "cost": 35
+  },
+  {
+   "pick": 41,
+   "round": 4,
+   "team_key": "offline.l.107878.t.1",
+   "player_key": "offline.l.107878.p.dakprescott",
+   "cost": 5
+  },
+  {
+   "pick": 42,
+   "round": 4,
+   "team_key": "offline.l.107878.t.4",
+   "player_key": "offline.l.107878.p.joeburrow",
+   "cost": 11
+  },
+  {
+   "pick": 43,
+   "round": 4,
+   "team_key": "offline.l.107878.t.12",
+   "player_key": "offline.l.107878.p.jaylenwaddle",
+   "cost": 26
+  },
+  {
+   "pick": 44,
+   "round": 4,
+   "team_key": "offline.l.107878.t.2",
+   "player_key": "offline.l.107878.p.breecehall",
+   "cost": 25
+  },
+  {
+   "pick": 45,
+   "round": 4,
+   "team_key": "offline.l.107878.t.7",
+   "player_key": "offline.l.107878.p.joshjacobs",
+   "cost": 28
+  },
+  {
+   "pick": 46,
+   "round": 4,
+   "team_key": "offline.l.107878.t.5",
+   "player_key": "offline.l.107878.p.mikeevans",
+   "cost": 8
+  },
+  {
+   "pick": 47,
+   "round": 4,
+   "team_key": "offline.l.107878.t.10",
+   "player_key": "offline.l.107878.p.tuckerkraft",
+   "cost": 7
+  },
+  {
+   "pick": 48,
+   "round": 4,
+   "team_key": "offline.l.107878.t.11",
+   "player_key": "offline.l.107878.p.drakemaye",
+   "cost": 14
+  },
+  {
+   "pick": 49,
+   "round": 5,
+   "team_key": "offline.l.107878.t.5",
+   "player_key": "offline.l.107878.p.lamarjackson",
+   "cost": 13
+  },
+  {
+   "pick": 50,
+   "round": 5,
+   "team_key": "offline.l.107878.t.1",
+   "player_key": "offline.l.107878.p.jaydendaniels",
+   "cost": 7
+  },
+  {
+   "pick": 51,
+   "round": 5,
+   "team_key": "offline.l.107878.t.12",
+   "player_key": "offline.l.107878.p.rasheerice",
+   "cost": 30
+  },
+  {
+   "pick": 52,
+   "round": 5,
+   "team_key": "offline.l.107878.t.12",
+   "player_key": "offline.l.107878.p.bakermayfield",
+   "cost": 1
+  },
+  {
+   "pick": 53,
+   "round": 5,
+   "team_key": "offline.l.107878.t.10",
+   "player_key": "offline.l.107878.p.tetairoamcmillan",
+   "cost": 26
+  },
+  {
+   "pick": 54,
+   "round": 5,
+   "team_key": "offline.l.107878.t.1",
+   "player_key": "offline.l.107878.p.terrymclaurin",
+   "cost": 9
+  },
+  {
+   "pick": 55,
+   "round": 5,
+   "team_key": "offline.l.107878.t.12",
+   "player_key": "offline.l.107878.p.jamesonwilliams",
+   "cost": 18
+  },
+  {
+   "pick": 56,
+   "round": 5,
+   "team_key": "offline.l.107878.t.12",
+   "player_key": "offline.l.107878.p.dandreswift",
+   "cost": 23
+  },
+  {
+   "pick": 57,
+   "round": 5,
+   "team_key": "offline.l.107878.t.3",
+   "player_key": "offline.l.107878.p.quinshonjudkins",
+   "cost": 21
+  },
+  {
+   "pick": 58,
+   "round": 5,
+   "team_key": "offline.l.107878.t.3",
+   "player_key": "offline.l.107878.p.parkerwashington",
+   "cost": 9
+  },
+  {
+   "pick": 59,
+   "round": 5,
+   "team_key": "offline.l.107878.t.11",
+   "player_key": "offline.l.107878.p.davidmontgomery",
+   "cost": 22
+  },
+  {
+   "pick": 60,
+   "round": 5,
+   "team_key": "offline.l.107878.t.11",
+   "player_key": "offline.l.107878.p.bhayshultuten",
+   "cost": 22
+  },
+  {
+   "pick": 61,
+   "round": 6,
+   "team_key": "offline.l.107878.t.4",
+   "player_key": "offline.l.107878.p.garrettwilson",
+   "cost": 20
+  },
+  {
+   "pick": 62,
+   "round": 6,
+   "team_key": "offline.l.107878.t.12",
+   "player_key": "offline.l.107878.p.treveyonhenderson",
+   "cost": 7
+  },
+  {
+   "pick": 63,
+   "round": 6,
+   "team_key": "offline.l.107878.t.7",
+   "player_key": "offline.l.107878.p.romeodunze",
+   "cost": 15
+  },
+  {
+   "pick": 64,
+   "round": 6,
+   "team_key": "offline.l.107878.t.1",
+   "player_key": "offline.l.107878.p.haroldfannin",
+   "cost": 13
+  },
+  {
+   "pick": 65,
+   "round": 6,
+   "team_key": "offline.l.107878.t.1",
+   "player_key": "offline.l.107878.p.samlaporta",
+   "cost": 9
+  },
+  {
+   "pick": 66,
+   "round": 6,
+   "team_key": "offline.l.107878.t.1",
+   "player_key": "offline.l.107878.p.carnelltate",
+   "cost": 17
+  },
+  {
+   "pick": 67,
+   "round": 6,
+   "team_key": "offline.l.107878.t.2",
+   "player_key": "offline.l.107878.p.michaelwilson",
+   "cost": 4
+  },
+  {
+   "pick": 68,
+   "round": 6,
+   "team_key": "offline.l.107878.t.9",
+   "player_key": "offline.l.107878.p.davanteadams",
+   "cost": 11
+  },
+  {
+   "pick": 69,
+   "round": 6,
+   "team_key": "offline.l.107878.t.9",
+   "player_key": "offline.l.107878.p.buckyirving",
+   "cost": 14
+  },
+  {
+   "pick": 70,
+   "round": 6,
+   "team_key": "offline.l.107878.t.8",
+   "player_key": "offline.l.107878.p.marvinharrisonjr",
+   "cost": 6
+  },
+  {
+   "pick": 71,
+   "round": 6,
+   "team_key": "offline.l.107878.t.1",
+   "player_key": "offline.l.107878.p.jadarianprice",
+   "cost": 20
+  },
+  {
+   "pick": 72,
+   "round": 6,
+   "team_key": "offline.l.107878.t.11",
+   "player_key": "offline.l.107878.p.kenyonsadiq",
+   "cost": 1
+  },
+  {
+   "pick": 73,
+   "round": 7,
+   "team_key": "offline.l.107878.t.1",
+   "player_key": "offline.l.107878.p.kaimifairbairn",
+   "cost": 3
+  },
+  {
+   "pick": 74,
+   "round": 7,
+   "team_key": "offline.l.107878.t.6",
+   "player_key": "offline.l.107878.p.kylermurray",
+   "cost": 2
+  },
+  {
+   "pick": 75,
+   "round": 7,
+   "team_key": "offline.l.107878.t.8",
+   "player_key": "offline.l.107878.p.rhamondrestevenson",
+   "cost": 8
+  },
+  {
+   "pick": 76,
+   "round": 7,
+   "team_key": "offline.l.107878.t.12",
+   "player_key": "offline.l.107878.p.daltonkincaid",
+   "cost": 1
+  },
+  {
+   "pick": 77,
+   "round": 7,
+   "team_key": "offline.l.107878.t.1",
+   "player_key": "offline.l.107878.p.dkmetcalf",
+   "cost": 6
+  },
+  {
+   "pick": 78,
+   "round": 7,
+   "team_key": "offline.l.107878.t.1",
+   "player_key": "offline.l.107878.p.denverdefense",
+   "cost": 4
+  },
+  {
+   "pick": 79,
+   "round": 7,
+   "team_key": "offline.l.107878.t.6",
+   "player_key": "offline.l.107878.p.brianthomasjr",
+   "cost": 5
+  },
+  {
+   "pick": 80,
+   "round": 7,
+   "team_key": "offline.l.107878.t.8",
+   "player_key": "offline.l.107878.p.jaredgoff",
+   "cost": 1
+  },
+  {
+   "pick": 81,
+   "round": 7,
+   "team_key": "offline.l.107878.t.8",
+   "player_key": "offline.l.107878.p.jaylenwarren",
+   "cost": 6
+  },
+  {
+   "pick": 82,
+   "round": 7,
+   "team_key": "offline.l.107878.t.4",
+   "player_key": "offline.l.107878.p.jonathonbrooks",
+   "cost": 3
+  },
+  {
+   "pick": 83,
+   "round": 7,
+   "team_key": "offline.l.107878.t.4",
+   "player_key": "offline.l.107878.p.tonypollard",
+   "cost": 6
+  },
+  {
+   "pick": 84,
+   "round": 7,
+   "team_key": "offline.l.107878.t.11",
+   "player_key": "offline.l.107878.p.jordanmason",
+   "cost": 7
+  },
+  {
+   "pick": 85,
+   "round": 8,
+   "team_key": "offline.l.107878.t.11",
+   "player_key": "offline.l.107878.p.jasonmyers",
+   "cost": 2
+  },
+  {
+   "pick": 86,
+   "round": 8,
+   "team_key": "offline.l.107878.t.11",
+   "player_key": "offline.l.107878.p.isaiahlikely",
+   "cost": 3
+  },
+  {
+   "pick": 87,
+   "round": 8,
+   "team_key": "offline.l.107878.t.7",
+   "player_key": "offline.l.107878.p.ricodowdle",
+   "cost": 5
+  },
+  {
+   "pick": 88,
+   "round": 8,
+   "team_key": "offline.l.107878.t.12",
+   "player_key": "offline.l.107878.p.tylerloop",
+   "cost": 3
+  },
+  {
+   "pick": 89,
+   "round": 8,
+   "team_key": "offline.l.107878.t.7",
+   "player_key": "offline.l.107878.p.justinherbert",
+   "cost": 5
+  },
+  {
+   "pick": 90,
+   "round": 8,
+   "team_key": "offline.l.107878.t.1",
+   "player_key": "offline.l.107878.p.seattledefense",
+   "cost": 5
+  },
+  {
+   "pick": 91,
+   "round": 8,
+   "team_key": "offline.l.107878.t.5",
+   "player_key": "offline.l.107878.p.jkdobbins",
+   "cost": 6
+  },
+  {
+   "pick": 92,
+   "round": 8,
+   "team_key": "offline.l.107878.t.8",
+   "player_key": "offline.l.107878.p.blakecorum",
+   "cost": 7
+  },
+  {
+   "pick": 93,
+   "round": 8,
+   "team_key": "offline.l.107878.t.10",
+   "player_key": "offline.l.107878.p.chrisgodwin",
+   "cost": 5
+  },
+  {
+   "pick": 94,
+   "round": 8,
+   "team_key": "offline.l.107878.t.11",
+   "player_key": "offline.l.107878.p.stefondiggs",
+   "cost": 6
+  },
+  {
+   "pick": 95,
+   "round": 8,
+   "team_key": "offline.l.107878.t.9",
+   "player_key": "offline.l.107878.p.traviskelce",
+   "cost": 6
+  },
+  {
+   "pick": 96,
+   "round": 8,
+   "team_key": "offline.l.107878.t.11",
+   "player_key": "offline.l.107878.p.minnesotadefense",
+   "cost": 2
+  },
+  {
+   "pick": 97,
+   "round": 9,
+   "team_key": "offline.l.107878.t.12",
+   "player_key": "offline.l.107878.p.pittsburghdefense",
+   "cost": 2
+  },
+  {
+   "pick": 98,
+   "round": 9,
+   "team_key": "offline.l.107878.t.12",
+   "player_key": "offline.l.107878.p.markandrews",
+   "cost": 6
+  },
+  {
+   "pick": 99,
+   "round": 9,
+   "team_key": "offline.l.107878.t.7",
+   "player_key": "offline.l.107878.p.chubahubbard",
+   "cost": 3
+  },
+  {
+   "pick": 100,
+   "round": 9,
+   "team_key": "offline.l.107878.t.12",
+   "player_key": "offline.l.107878.p.rjharvey",
+   "cost": 4
+  },
+  {
+   "pick": 101,
+   "round": 9,
+   "team_key": "offline.l.107878.t.5",
+   "player_key": "offline.l.107878.p.dezhaunstribling",
+   "cost": 5
+  },
+  {
+   "pick": 102,
+   "round": 9,
+   "team_key": "offline.l.107878.t.5",
+   "player_key": "offline.l.107878.p.quentinjohnston",
+   "cost": 3
+  },
+  {
+   "pick": 103,
+   "round": 9,
+   "team_key": "offline.l.107878.t.8",
+   "player_key": "offline.l.107878.p.camerondicker",
+   "cost": 3
+  },
+  {
+   "pick": 104,
+   "round": 9,
+   "team_key": "offline.l.107878.t.11",
+   "player_key": "offline.l.107878.p.joshdowns",
+   "cost": 5
+  },
+  {
+   "pick": 105,
+   "round": 9,
+   "team_key": "offline.l.107878.t.7",
+   "player_key": "offline.l.107878.p.alecpierce",
+   "cost": 3
+  },
+  {
+   "pick": 106,
+   "round": 9,
+   "team_key": "offline.l.107878.t.9",
+   "player_key": "offline.l.107878.p.jakobimeyers",
+   "cost": 3
+  },
+  {
+   "pick": 107,
+   "round": 9,
+   "team_key": "offline.l.107878.t.11",
+   "player_key": "offline.l.107878.p.kcconcepcion",
+   "cost": 8
+  },
+  {
+   "pick": 108,
+   "round": 9,
+   "team_key": "offline.l.107878.t.4",
+   "player_key": "offline.l.107878.p.lachargersdefense",
+   "cost": 1
+  },
+  {
+   "pick": 109,
+   "round": 10,
+   "team_key": "offline.l.107878.t.5",
+   "player_key": "offline.l.107878.p.dallasgoedert",
+   "cost": 4
+  },
+  {
+   "pick": 110,
+   "round": 10,
+   "team_key": "offline.l.107878.t.6",
+   "player_key": "offline.l.107878.p.kylemonangai",
+   "cost": 2
+  },
+  {
+   "pick": 111,
+   "round": 10,
+   "team_key": "offline.l.107878.t.12",
+   "player_key": "offline.l.107878.p.bonix",
+   "cost": 5
+  },
+  {
+   "pick": 112,
+   "round": 10,
+   "team_key": "offline.l.107878.t.11",
+   "player_key": "offline.l.107878.p.jordyntyson",
+   "cost": 15
+  },
+  {
+   "pick": 113,
+   "round": 10,
+   "team_key": "offline.l.107878.t.5",
+   "player_key": "offline.l.107878.p.matthewgolden",
+   "cost": 3
+  },
+  {
+   "pick": 114,
+   "round": 10,
+   "team_key": "offline.l.107878.t.10",
+   "player_key": "offline.l.107878.p.jordanaddison",
+   "cost": 3
+  },
+  {
+   "pick": 115,
+   "round": 10,
+   "team_key": "offline.l.107878.t.3",
+   "player_key": "offline.l.107878.p.jaydenreed",
+   "cost": 2
+  },
+  {
+   "pick": 116,
+   "round": 10,
+   "team_key": "offline.l.107878.t.9",
+   "player_key": "offline.l.107878.p.cairosantos",
+   "cost": 2
+  },
+  {
+   "pick": 117,
+   "round": 10,
+   "team_key": "offline.l.107878.t.4",
+   "player_key": "offline.l.107878.p.makailemon",
+   "cost": 3
+  },
+  {
+   "pick": 118,
+   "round": 10,
+   "team_key": "offline.l.107878.t.11",
+   "player_key": "offline.l.107878.p.denzelboston",
+   "cost": 3
+  },
+  {
+   "pick": 119,
+   "round": 10,
+   "team_key": "offline.l.107878.t.4",
+   "player_key": "offline.l.107878.p.camlittle",
+   "cost": 1
+  },
+  {
+   "pick": 120,
+   "round": 10,
+   "team_key": "offline.l.107878.t.2",
+   "player_key": "offline.l.107878.p.chasemclaughlin",
+   "cost": 1
+  },
+  {
+   "pick": 121,
+   "round": 11,
+   "team_key": "offline.l.107878.t.9",
+   "player_key": "offline.l.107878.p.rachaadwhite",
+   "cost": 2
+  },
+  {
+   "pick": 122,
+   "round": 11,
+   "team_key": "offline.l.107878.t.12",
+   "player_key": "offline.l.107878.p.kennethgainwell",
+   "cost": 3
+  },
+  {
+   "pick": 123,
+   "round": 11,
+   "team_key": "offline.l.107878.t.2",
+   "player_key": "offline.l.107878.p.jakeferguson",
+   "cost": 2
+  },
+  {
+   "pick": 124,
+   "round": 11,
+   "team_key": "offline.l.107878.t.5",
+   "player_key": "offline.l.107878.p.philadelphiadefense",
+   "cost": 2
+  },
+  {
+   "pick": 125,
+   "round": 11,
+   "team_key": "offline.l.107878.t.9",
+   "player_key": "offline.l.107878.p.brockpurdy",
+   "cost": 2
+  },
+  {
+   "pick": 126,
+   "round": 11,
+   "team_key": "offline.l.107878.t.3",
+   "player_key": "offline.l.107878.p.chrisrodriguez",
+   "cost": 1
+  },
+  {
+   "pick": 127,
+   "round": 11,
+   "team_key": "offline.l.107878.t.10",
+   "player_key": "offline.l.107878.p.aaronjones",
+   "cost": 1
+  },
+  {
+   "pick": 128,
+   "round": 11,
+   "team_key": "offline.l.107878.t.9",
+   "player_key": "offline.l.107878.p.patfreiermuth",
+   "cost": 1
+  },
+  {
+   "pick": 129,
+   "round": 11,
+   "team_key": "offline.l.107878.t.4",
+   "player_key": "offline.l.107878.p.jaxsondart",
+   "cost": 5
+  },
+  {
+   "pick": 130,
+   "round": 11,
+   "team_key": "offline.l.107878.t.9",
+   "player_key": "offline.l.107878.p.jacksonvilledefense",
+   "cost": 2
+  },
+  {
+   "pick": 131,
+   "round": 11,
+   "team_key": "offline.l.107878.t.12",
+   "player_key": "offline.l.107878.p.jalencoker",
+   "cost": 3
+  },
+  {
+   "pick": 132,
+   "round": 11,
+   "team_key": "offline.l.107878.t.7",
+   "player_key": "offline.l.107878.p.hunterhenry",
+   "cost": 1
+  },
+  {
+   "pick": 133,
+   "round": 12,
+   "team_key": "offline.l.107878.t.5",
+   "player_key": "offline.l.107878.p.eddypineiro",
+   "cost": 2
+  },
+  {
+   "pick": 134,
+   "round": 12,
+   "team_key": "offline.l.107878.t.7",
+   "player_key": "offline.l.107878.p.matthewstafford",
+   "cost": 4
+  },
+  {
+   "pick": 135,
+   "round": 12,
+   "team_key": "offline.l.107878.t.3",
+   "player_key": "offline.l.107878.p.juwanjohnson",
+   "cost": 1
+  },
+  {
+   "pick": 136,
+   "round": 12,
+   "team_key": "offline.l.107878.t.8",
+   "player_key": "offline.l.107878.p.detroitdefense",
+   "cost": 2
+  },
+  {
+   "pick": 137,
+   "round": 12,
+   "team_key": "offline.l.107878.t.9",
+   "player_key": "offline.l.107878.p.wandalerobinson",
+   "cost": 1
+  },
+  {
+   "pick": 138,
+   "round": 12,
+   "team_key": "offline.l.107878.t.2",
+   "player_key": "offline.l.107878.p.patrickmahomes",
+   "cost": 1
+  },
+  {
+   "pick": 139,
+   "round": 12,
+   "team_key": "offline.l.107878.t.6",
+   "player_key": "offline.l.107878.p.romeodoubs",
+   "cost": 1
+  },
+  {
+   "pick": 140,
+   "round": 12,
+   "team_key": "offline.l.107878.t.7",
+   "player_key": "offline.l.107878.p.deebosamuel",
+   "cost": 1
+  },
+  {
+   "pick": 141,
+   "round": 12,
+   "team_key": "offline.l.107878.t.2",
+   "player_key": "offline.l.107878.p.xavierworthy",
+   "cost": 3
+  },
+  {
+   "pick": 142,
+   "round": 12,
+   "team_key": "offline.l.107878.t.9",
+   "player_key": "offline.l.107878.p.malikwillis",
+   "cost": 3
+  },
+  {
+   "pick": 143,
+   "round": 12,
+   "team_key": "offline.l.107878.t.10",
+   "player_key": "offline.l.107878.p.tylerallgeier",
+   "cost": 1
+  },
+  {
+   "pick": 144,
+   "round": 12,
+   "team_key": "offline.l.107878.t.9",
+   "player_key": "offline.l.107878.p.tankbigsby",
+   "cost": 1
+  },
+  {
+   "pick": 145,
+   "round": 13,
+   "team_key": "offline.l.107878.t.2",
+   "player_key": "offline.l.107878.p.calvinridley",
+   "cost": 1
+  },
+  {
+   "pick": 146,
+   "round": 13,
+   "team_key": "offline.l.107878.t.6",
+   "player_key": "offline.l.107878.p.rashidshaheed",
+   "cost": 1
+  },
+  {
+   "pick": 147,
+   "round": 13,
+   "team_key": "offline.l.107878.t.7",
+   "player_key": "offline.l.107878.p.jakebates",
+   "cost": 1
+  },
+  {
+   "pick": 148,
+   "round": 13,
+   "team_key": "offline.l.107878.t.8",
+   "player_key": "offline.l.107878.p.jordanlove",
+   "cost": 1
+  },
+  {
+   "pick": 149,
+   "round": 13,
+   "team_key": "offline.l.107878.t.3",
+   "player_key": "offline.l.107878.p.tylershough",
+   "cost": 1
+  },
+  {
+   "pick": 150,
+   "round": 13,
+   "team_key": "offline.l.107878.t.10",
+   "player_key": "offline.l.107878.p.tylerbass",
+   "cost": 1
+  },
+  {
+   "pick": 151,
+   "round": 13,
+   "team_key": "offline.l.107878.t.9",
+   "player_key": "offline.l.107878.p.tyjaespears",
+   "cost": 1
+  },
+  {
+   "pick": 152,
+   "round": 13,
+   "team_key": "offline.l.107878.t.2",
+   "player_key": "offline.l.107878.p.jalenmcmillan",
+   "cost": 1
+  },
+  {
+   "pick": 153,
+   "round": 13,
+   "team_key": "offline.l.107878.t.6",
+   "player_key": "offline.l.107878.p.jonahcoleman",
+   "cost": 1
+  },
+  {
+   "pick": 154,
+   "round": 13,
+   "team_key": "offline.l.107878.t.7",
+   "player_key": "offline.l.107878.p.newenglanddefense",
+   "cost": 1
+  },
+  {
+   "pick": 155,
+   "round": 13,
+   "team_key": "offline.l.107878.t.10",
+   "player_key": "offline.l.107878.p.khalilshakir",
+   "cost": 2
+  },
+  {
+   "pick": 156,
+   "round": 13,
+   "team_key": "offline.l.107878.t.10",
+   "player_key": "offline.l.107878.p.tennesseedefense",
+   "cost": 1
+  },
+  {
+   "pick": 157,
+   "round": 14,
+   "team_key": "offline.l.107878.t.2",
+   "player_key": "offline.l.107878.p.samdarnold",
+   "cost": 1
+  },
+  {
+   "pick": 158,
+   "round": 14,
+   "team_key": "offline.l.107878.t.6",
+   "player_key": "offline.l.107878.p.chigoziemokonkwo",
+   "cost": 1
+  },
+  {
+   "pick": 159,
+   "round": 14,
+   "team_key": "offline.l.107878.t.8",
+   "player_key": "offline.l.107878.p.keenanallen",
+   "cost": 1
+  },
+  {
+   "pick": 160,
+   "round": 14,
+   "team_key": "offline.l.107878.t.2",
+   "player_key": "offline.l.107878.p.buffalodefense",
+   "cost": 1
+  },
+  {
+   "pick": 161,
+   "round": 14,
+   "team_key": "offline.l.107878.t.6",
+   "player_key": "offline.l.107878.p.marshawnlloyd",
+   "cost": 1
+  },
+  {
+   "pick": 162,
+   "round": 14,
+   "team_key": "offline.l.107878.t.8",
+   "player_key": "offline.l.107878.p.daltonschultz",
+   "cost": 1
+  },
+  {
+   "pick": 163,
+   "round": 14,
+   "team_key": "offline.l.107878.t.2",
+   "player_key": "offline.l.107878.p.jerryjeudy",
+   "cost": 1
+  },
+  {
+   "pick": 164,
+   "round": 14,
+   "team_key": "offline.l.107878.t.8",
+   "player_key": "offline.l.107878.p.woodymarks",
+   "cost": 1
+  }
+ ],
+ "keepers": [
+  {
+   "player_key": "offline.l.107878.p.jaxonsmithnjigba",
+   "team_key": "offline.l.107878.t.2",
+   "cost": 5,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.travisetienne",
+   "team_key": "offline.l.107878.t.2",
+   "cost": 5,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.brandonaubrey",
+   "team_key": "offline.l.107878.t.6",
+   "cost": 2,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.christianwatson",
+   "team_key": "offline.l.107878.t.6",
+   "cost": 1,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.chasebrown",
+   "team_key": "offline.l.107878.t.5",
+   "cost": 4,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.georgepickens",
+   "team_key": "offline.l.107878.t.5",
+   "cost": 13,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.trevorlawrence",
+   "team_key": "offline.l.107878.t.3",
+   "cost": 1,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.michaelpittmanjr",
+   "team_key": "offline.l.107878.t.3",
+   "cost": 1,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.djmoore",
+   "team_key": "offline.l.107878.t.10",
+   "cost": 1,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.courtlandsutton",
+   "team_key": "offline.l.107878.t.10",
+   "cost": 3,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.colstonloveland",
+   "team_key": "offline.l.107878.t.4",
+   "cost": 1,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.lutherburden",
+   "team_key": "offline.l.107878.t.4",
+   "cost": 1,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.chrisolave",
+   "team_key": "offline.l.107878.t.7",
+   "cost": 8,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.tylerwarren",
+   "team_key": "offline.l.107878.t.7",
+   "cost": 5,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.keoncoleman",
+   "team_key": "offline.l.107878.t.8",
+   "cost": 1,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.javontewilliams",
+   "team_key": "offline.l.107878.t.1",
+   "cost": 2,
+   "round": null,
+   "source": "csv"
+  },
+  {
+   "player_key": "offline.l.107878.p.laddmcconkey",
+   "team_key": "offline.l.107878.t.1",
+   "cost": 4,
+   "round": null,
+   "source": "csv"
+  }
+ ]
+}

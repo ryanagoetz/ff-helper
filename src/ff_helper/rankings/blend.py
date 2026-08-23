@@ -95,6 +95,18 @@ class PlayerValuation:
     def is_injured(self) -> bool:
         return self.status.upper() in {"IR", "O", "PUP", "NFI", "SUSP"}
 
+    @property
+    def eligible_positions(self) -> tuple[str, ...]:
+        """The one position this player is ranked at, as a tuple.
+
+        Present so a season valuation satisfies ``engine.lineup.LineupPlayer`` alongside
+        the weekly one. Draft-time valuation deliberately collapses a player to a single
+        position -- ADP, replacement level, and positional scarcity are all measured that
+        way -- so this reports what the model actually believes rather than reaching back
+        to Yahoo for a multi-position list nothing upstream used.
+        """
+        return (self.position,)
+
 
 @dataclass
 class BlendResult:

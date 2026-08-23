@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Score the engine against a recorded draft: hits, calibration, counterfactual.
 
-    python scripts/backtest.py --file data/drafts/2025-league.json
-    python scripts/backtest.py --file data/drafts/2025-league.json --time
-    python scripts/backtest.py --file data/drafts/2025-league.json --predictor analytic
+    uv run python scripts/backtest.py --file data/drafts/2025-league.json
+    uv run python scripts/backtest.py --file data/drafts/2025-league.json --time
+    uv run python scripts/backtest.py --file data/drafts/2025-league.json --predictor analytic
 
 Runs entirely offline from a draft record (see ``scripts/replay.py --dump``) plus the
 cached ranking snapshot. Three sections:
@@ -12,9 +12,13 @@ cached ranking snapshot. Three sections:
    Low-stakes color; disagreement is expected.
 2. **Calibration** -- Brier score and reliability table for the survival probabilities.
    This is the number that tunes the model. 0.25 is "always say fifty-fifty"; lower is
-   better, and the reliability bins show *where* it is wrong.
+   better, and the reliability bins show *where* it is wrong. Snake only: "does he last
+   until my next pick" presumes a pick order, and an auction has none.
 3. **Counterfactual** -- the roster the engine would have drafted versus the one you
-   actually did, and versus naive best-VOR. The end-to-end answer.
+   actually did, and versus a naive baseline. The end-to-end answer. Runs for auctions
+   too, at recorded prices; ``--follow-from N`` replays history through pick N and hands
+   over after, which is how you ask whether the advice digs you out of a hole rather
+   than watching a greedy policy spend everything on the first three sales.
 """
 
 from __future__ import annotations
@@ -46,7 +50,14 @@ def _fresh_assistant(record: DraftRecord, snapshot: Snapshot) -> Assistant:
 
 
 def run(
-    record: DraftRecord, snapshot: Snapshot, *, limit: int, timing: bool, predictor: str
+    record: DraftRecord,
+    snapshot: Snapshot,
+    *,
+    limit: int,
+    timing: bool,
+    predictor: str,
+    follow_from: int | None = None,
+    display_limit: int = 8,
 ) -> None:
     my_team = record.my_team
     print(
@@ -78,7 +89,28 @@ def run(
         )
 
     if record.is_auction:
-        print("\nCalibration and counterfactual replay are snake-only; done.")
+        # Survival calibration has no auction meaning -- "does he last until my next
+        # pick" presumes a pick order, and in an auction everyone is biddable always.
+        # The counterfactual does translate, so run that and say what was skipped.
+        print("\nSurvival calibration is snake-only (an auction has no 'next pick').")
+        if follow_from is not None:
+            print(f"  (history replayed verbatim through pick {follow_from}, policy after)")
+        print("\nCounterfactual rosters (my buys made by each policy):")
+        print(f"  (short list = {display_limit} rows, matching the app)")
+        print(f"  {'policy':<10} {'lineup pts':>10} {'roster VOR':>11} {'spent':>7} {'slots':>6}")
+        for policy in counterfactual.AUCTION_POLICIES:
+            result = counterfactual.auction_counterfactual(
+                record,
+                snapshot,
+                policy=policy,
+                display_limit=display_limit,
+                follow_from=follow_from,
+            )
+            print(
+                f"  {policy:<10} {result.lineup_points:10.1f} "
+                f"{result.total_vor:11.1f} {result.spent:7d} {len(result.players):6d}"
+            )
+        print("  (prices held at what they actually were -- see counterfactual.py)")
         return
 
     # -- calibration ---------------------------------------------------------------
@@ -117,6 +149,27 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=3, help="Short-list size for the hit summary")
     parser.add_argument("--time", action="store_true", help="Report recommendation latency")
     parser.add_argument(
+        "--display-limit",
+        type=int,
+        default=8,
+        help=(
+            "Auction only: how many rows the engine_list policy may buy from. Defaults to "
+            "8 to match the app's own short list (Assistant.recommendations). Distinct "
+            "from --limit, which sizes the snake hit summary -- reusing that here graded "
+            "the ranking change against a 3-row display no user ever sees, and the "
+            "engine_list verdict inverts between 3 and 8."
+        ),
+    )
+    parser.add_argument(
+        "--follow-from",
+        type=int,
+        help=(
+            "Auction only: replay history verbatim through this pick, then hand over to "
+            "the policy. Without it a greedy policy spends its whole budget on the first "
+            "few sales and never reaches the endgame where advice matters."
+        ),
+    )
+    parser.add_argument(
         "--predictor",
         choices=sorted(PREDICTORS),
         default="analytic",
@@ -150,7 +203,15 @@ def main() -> int:
         )
         return 1
 
-    run(record, snapshot, limit=args.limit, timing=args.time, predictor=args.predictor)
+    run(
+        record,
+        snapshot,
+        limit=args.limit,
+        timing=args.time,
+        predictor=args.predictor,
+        follow_from=args.follow_from,
+        display_limit=args.display_limit,
+    )
     return 0
 
 

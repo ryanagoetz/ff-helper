@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Replay a completed draft and show what the engine would have recommended.
 
-    python scripts/replay.py                      # your league's current/last draft
-    python scripts/replay.py --league 449.l.9999  # a specific (e.g. prior season) league
-    python scripts/replay.py --dump data/drafts/2025.json   # also save a draft record
-    python scripts/replay.py --from-file data/drafts/2025.json   # replay offline
+    uv run python scripts/replay.py                      # your league's current/last draft
+    uv run python scripts/replay.py --league 449.l.9999  # a specific (e.g. prior season) league
+    uv run python scripts/replay.py --dump data/drafts/2025.json   # also save a draft record
+    uv run python scripts/replay.py --from-file data/drafts/2025.json   # replay offline
 
 This is the real test of the model, and it is worth running well before draft day. At each
 of your turns it prints the engine's top recommendation alongside who you actually took and

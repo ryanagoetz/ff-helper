@@ -1,0 +1,59 @@
+{
+  "fantasy_content": {
+    "league": [
+      {
+        "league_key": "461.l.123456",
+        "league_id": "123456",
+        "name": "Test Dynasty"
+      },
+      {
+        "players": {
+          "0": {
+            "player": [
+              [
+                { "player_key": "461.p.200001" },
+                { "player_id": "200001" },
+                { "name": { "full": "Waiver Breakout" } },
+                { "editorial_team_abbr": "Ari" },
+                { "display_position": "RB" },
+                { "eligible_positions": [{ "position": "RB" }] },
+                { "bye_weeks": { "week": "11" } }
+              ],
+              { "percent_owned": { "coverage_type": "week", "week": "7", "value": 31, "delta": "+18" } }
+            ]
+          },
+          "1": {
+            "player": [
+              [
+                { "player_key": "461.p.200002" },
+                { "player_id": "200002" },
+                { "name": { "full": "Banged Up Receiver" } },
+                { "editorial_team_abbr": "NYJ" },
+                { "display_position": "WR" },
+                { "eligible_positions": [{ "position": "WR" }, { "position": "RB" }] },
+                { "bye_weeks": { "week": "7" } },
+                { "status": "Q" },
+                { "status_full": "Questionable - Ankle" },
+                { "injury_note": "Limited in Wednesday practice" }
+              ],
+              { "percent_owned": { "coverage_type": "week", "week": "7", "value": 74, "delta": "-3" } }
+            ]
+          },
+          "2": {
+            "player": [
+              [
+                { "player_key": "461.p.200003" },
+                { "player_id": "200003" },
+                { "name": { "full": "Nobody Rosters Him" } },
+                { "editorial_team_abbr": "Car" },
+                { "display_position": "TE" },
+                { "eligible_positions": [{ "position": "TE" }] }
+              ]
+            ]
+          },
+          "count": 3
+        }
+      }
+    ]
+  }
+}

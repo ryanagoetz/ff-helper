@@ -855,3 +855,99 @@ class TestFullAuctionSimulation:
         keys = {pick.position for pick in assistant.auction_recommendations(limit=60)}
         assert {"RB", "WR"} <= keys
         assert set(POSITION_POOL) >= keys
+
+
+def _price_the_board(assistant, *, dear: str, dear_cost: float):
+    """Give the board a realistic ``market_cost`` spread, with one player priced dear.
+
+    tests/helpers.build_snapshot sets ``auction_cost`` on nobody, so every valuation
+    reaches the engine with ``market is None`` -- which left the entire "a known market
+    price still demotes" half of the affordability rule untested, and any assertion
+    filtered on ``market is not None`` vacuously true over an empty list.
+
+    Every player is priced, not just the dear one: ``_estimate_markets`` interpolates
+    across the whole pool from whatever real prices exist, so seeding a single cost makes
+    it extrapolate the same number onto all 195 players and everyone comes back
+    unaffordable. Par is the natural stand-in for a going rate.
+    """
+    valuations = assistant.valuations.valuations
+    for key, valuation in list(valuations.items()):
+        cost = dear_cost if key == dear else assistant.dollars.value_of(key)
+        valuations[key] = replace(valuation, market_cost=float(cost))
+
+
+class TestAffordabilityIsNotCircular:
+    def test_a_priced_player_over_the_ceiling_is_demoted(self, assistant, my_key):
+        """The flag keeps its teeth where the price is real and exogenous."""
+        state = assistant.state
+        state.record_manual("461.p.RB0", pick=1, cost=185, team_key=my_key)
+        ceiling = state.max_bid(my_key)
+        # One player priced far above the ceiling, one comfortably under it.
+        _price_the_board(assistant, dear="461.p.RB1", dear_cost=ceiling + 50)
+
+        picks = assistant.auction_recommendations(limit=200)
+        priced_out = [p for p in picks if p.market is not None and p.market > ceiling]
+        assert priced_out, "fixture no longer produces a player above the ceiling"
+        assert all(not p.affordable for p in priced_out)
+
+    def test_a_priced_player_over_the_ceiling_sorts_below_a_buyable_one(
+        self, assistant, my_key
+    ):
+        """The consequence, not the definition -- this is what a regression would break."""
+        state = assistant.state
+        # A real but finite budget: spend so hard that max_bid collapses to a dollar or
+        # two and nothing is buyable, and the comparison has only one side.
+        state.record_manual("461.p.RB0", pick=1, cost=120, team_key=my_key)
+        ceiling = state.max_bid(my_key)
+        _price_the_board(assistant, dear="461.p.RB1", dear_cost=ceiling + 50)
+
+        picks = assistant.auction_recommendations(limit=200)
+        buyable = [i for i, p in enumerate(picks) if p.bid_to > 0 and p.affordable]
+        priced_out = [i for i, p in enumerate(picks) if not p.affordable]
+        assert buyable and priced_out, "need both kinds present to compare"
+        assert max(buyable) < min(priced_out)
+
+    def test_unknown_market_price_counts_as_no_evidence(self, assistant, my_key):
+        """A player with no market signal must not be judged unaffordable by his worth.
+
+        ``expected_price`` falls back to my own inflation-adjusted valuation when no
+        source priced him, so testing that against my ceiling asks "do I value him above
+        my budget", not "can I win him". Read as the latter it sorted the players most
+        worth having to the bottom of the list.
+        """
+        state = assistant.state
+        state.record_manual("461.p.RB0", pick=1, cost=185, team_key=my_key)
+
+        picks = assistant.auction_recommendations(limit=200)
+        unpriced = [pick for pick in picks if pick.market is None]
+        assert unpriced, "fixture no longer produces players without a market price"
+        assert all(pick.affordable for pick in unpriced)
+
+
+class TestSlotReservation:
+    def test_two_open_slots_do_not_reserve_the_same_player_twice(self, assistant, my_key):
+        """Filling two receiver slots does not mean buying the best receiver twice.
+
+        Quoting one price per opening reserved the top of the market once per slot. On a
+        real board that asked $66 of a $56 budget to cover two slots eventually filled for
+        $4, and the cap collapsed to a dollar or two on every position at once.
+        """
+        state = assistant.state
+        # Leave a real but finite budget, with the whole roster still to fill.
+        state.record_manual("461.p.RB0", pick=1, cost=140, team_key=my_key)
+
+        picks = assistant.auction_recommendations(limit=200)
+        receivers = [pick for pick in picks if pick.position == "WR"]
+        assert receivers, "fixture no longer offers receivers"
+        # With two starting receiver slots open and money left, at least one receiver has
+        # to remain buyable. Reserving the top price twice drove every cap to zero.
+        assert any(pick.bid_to > 0 for pick in receivers)
+
+    def test_caps_never_promise_more_than_the_budget(self, assistant, my_key):
+        state = assistant.state
+        state.record_manual("461.p.RB0", pick=1, cost=140, team_key=my_key)
+
+        budget = state.budget_remaining(my_key)
+        for pick in assistant.auction_recommendations(limit=200):
+            assert pick.bid_to <= state.max_bid(my_key)
+            assert pick.bid_to <= budget

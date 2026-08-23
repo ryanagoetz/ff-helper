@@ -1,0 +1,104 @@
+{
+  "fantasy_content": {
+    "league": [
+      {
+        "league_key": "461.l.123456",
+        "league_id": "123456",
+        "name": "Test Dynasty",
+        "num_teams": 12,
+        "season": "2026"
+      },
+      {
+        "transactions": {
+          "0": {
+            "transaction": [
+              {
+                "transaction_key": "461.l.123456.tr.42",
+                "transaction_id": "42",
+                "type": "add/drop",
+                "status": "successful",
+                "timestamp": "1760000000",
+                "faab_bid": "14"
+              },
+              {
+                "players": {
+                  "0": {
+                    "player": [
+                      [
+                        { "player_key": "461.p.200001" },
+                        { "name": { "full": "Waiver Breakout" } },
+                        { "display_position": "RB" }
+                      ],
+                      {
+                        "transaction_data": {
+                          "type": "add",
+                          "source_type": "waivers",
+                          "destination_type": "team",
+                          "destination_team_key": "461.l.123456.t.1"
+                        }
+                      }
+                    ]
+                  },
+                  "1": {
+                    "player": [
+                      [
+                        { "player_key": "461.p.100003" },
+                        { "name": { "full": "Rome Odunze" } },
+                        { "display_position": "WR" }
+                      ],
+                      {
+                        "transaction_data": [
+                          {
+                            "type": "drop",
+                            "source_type": "team",
+                            "source_team_key": "461.l.123456.t.1",
+                            "destination_type": "waivers"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "count": 2
+                }
+              }
+            ]
+          },
+          "1": {
+            "transaction": [
+              {
+                "transaction_key": "461.l.123456.tr.43",
+                "transaction_id": "43",
+                "type": "add",
+                "status": "successful",
+                "timestamp": "1760003600"
+              },
+              {
+                "players": {
+                  "0": {
+                    "player": [
+                      [
+                        { "player_key": "461.p.200002" },
+                        { "name": { "full": "Free Agent Streamer" } },
+                        { "display_position": "DEF" }
+                      ],
+                      {
+                        "transaction_data": {
+                          "type": "add",
+                          "source_type": "freeagents",
+                          "destination_type": "team",
+                          "destination_team_key": "461.l.123456.t.2"
+                        }
+                      }
+                    ]
+                  },
+                  "count": 1
+                }
+              }
+            ]
+          },
+          "count": 2
+        }
+      }
+    ]
+  }
+}

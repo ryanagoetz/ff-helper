@@ -23,13 +23,17 @@ from typing import Any
 
 from ff_helper.yahoo.models import (
     DEFAULT_AUCTION_BUDGET,
+    PROJECTION_STAT_IDS,
     DraftAnalysis,
     DraftPick,
     KeptPlayer,
     League,
     LeagueSettings,
+    Matchup,
+    RosterEntry,
     RosterSlot,
     Team,
+    Transaction,
     YahooPlayer,
 )
 
@@ -116,6 +120,10 @@ def parse_league(node: Any) -> League:
         draft_status=flat.get("draft_status", ""),
         scoring_type=flat.get("scoring_type", ""),
         settings=parse_settings(settings_node) if settings_node else None,
+        current_week=_to_int(flat.get("current_week")),
+        start_week=_to_int(flat.get("start_week")),
+        end_week=_to_int(flat.get("end_week")),
+        is_finished=str(flat.get("is_finished", "0")) == "1",
     )
 
 
@@ -149,6 +157,13 @@ def parse_settings(node: Any) -> LeagueSettings:
         stat_modifiers=modifiers,
         is_auction=str(flat.get("draft_type", "")).lower() == "auction",
         auction_budget=_parse_auction_budget(flat),
+        waiver_type=str(flat.get("waiver_type", "") or ""),
+        waiver_rule=str(flat.get("waiver_rule", "") or ""),
+        uses_faab=str(flat.get("uses_faab", "0")) == "1",
+        faab_budget=_to_int(flat.get("faab_budget")),
+        trade_end_date=str(flat.get("trade_end_date", "") or ""),
+        playoff_start_week=_to_int(flat.get("playoff_start_week")),
+        num_playoff_teams=_to_int(flat.get("num_playoff_teams")),
     )
 
 
@@ -262,6 +277,11 @@ def parse_roster(payload: dict, team_key: str) -> list[KeptPlayer]:
     """Players currently rostered by a team.
 
     Called before the draft, every player this returns is a keeper.
+
+    In-season, that premise is false and the slot a player sits in starts mattering --
+    see ``parse_roster_entries``, which reads the same payload for the other purpose.
+    Kept separate on purpose: widening this one would put a keeper-shaped assumption in
+    front of every lineup decision.
     """
     team = unwrap(content(payload), "team")
     roster = unwrap(team, "roster")
@@ -290,6 +310,52 @@ def parse_roster(payload: dict, team_key: str) -> list[KeptPlayer]:
             )
         )
     return kept
+
+
+def parse_roster_entries(payload: dict, team_key: str, week: int) -> list[RosterEntry]:
+    """A team's roster for one week, with the slot each player is actually in.
+
+    The in-season sibling of ``parse_roster``. Same payload, same collection-finding, but
+    it keeps ``selected_position`` -- which is what makes "what did I actually start" a
+    knowable fact, and therefore what makes the weekly lineup backtest possible at all.
+
+    ``week`` is passed in rather than read from the payload: it is the week we *asked*
+    for, and a roster echoing a different one is a bug we would rather surface upstream
+    than silently adopt here.
+    """
+    team = unwrap(content(payload), "team")
+    roster = unwrap(team, "roster")
+    players_node = _find_players_collection(roster)
+
+    entries: list[RosterEntry] = []
+    for entry in collection_items(players_node):
+        player_node = unwrap(entry, "player") or entry
+        flat = flatten(player_node)
+        player_key = flat.get("player_key")
+        if not player_key:
+            continue
+        entries.append(
+            RosterEntry(
+                player_key=player_key,
+                team_key=team_key,
+                week=week,
+                selected_position=_parse_selected_position(flat.get("selected_position")),
+            )
+        )
+    return entries
+
+
+def _parse_selected_position(node: Any) -> str:
+    """Yahoo wraps the slot as ``[{"coverage_type": ...}, {"position": "W/R/T"}]``.
+
+    An empty string means Yahoo told us nothing, which is different from "bench" -- a
+    caller treating the two the same would score an unknown slot as a deliberate sit.
+    """
+    if node is None:
+        return ""
+    if isinstance(node, str):
+        return node
+    return str(flatten(node).get("position", "") or "")
 
 
 def parse_draft_analysis(node: Any) -> DraftAnalysis:
@@ -333,7 +399,23 @@ def parse_player(node: Any) -> YahooPlayer | None:
         bye_week=_parse_bye(flat.get("bye_weeks")),
         status=str(flat.get("status", "") or ""),
         draft_analysis=parse_draft_analysis(analysis_node) if analysis_node else DraftAnalysis(),
+        status_full=str(flat.get("status_full", "") or ""),
+        injury_note=str(flat.get("injury_note", "") or ""),
+        percent_owned=_parse_percent_owned(flat.get("percent_owned")),
     )
+
+
+def _parse_percent_owned(node: Any) -> float | None:
+    """Ownership arrives as ``{"coverage_type": "week", "value": 31, "delta": "+5"}``.
+
+    Returns None rather than 0.0 when absent: "nobody rosters him" and "we did not ask
+    for ownership" are different facts, and only one of them is a waiver signal.
+    """
+    if node is None:
+        return None
+    if isinstance(node, int | float):
+        return float(node)
+    return _to_float(flatten(node).get("value"))
 
 
 def _parse_bye(node: Any) -> int | None:
@@ -341,6 +423,192 @@ def _parse_bye(node: Any) -> int | None:
         return None
     flat = flatten(node)
     return _to_int(flat.get("week"))
+
+
+# --------------------------------------------------------------------------------------
+# In-season: scoreboard and transactions
+# --------------------------------------------------------------------------------------
+
+
+def parse_scoreboard(payload: dict) -> list[Matchup]:
+    """One week's matchups, expanded to one ``Matchup`` per team.
+
+    A Yahoo matchup carries exactly two teams, so each pairing yields two entries facing
+    opposite directions. See ``Matchup`` for why that redundancy is deliberate.
+    """
+    league = unwrap(content(payload), "league")
+    scoreboard = unwrap(league, "scoreboard")
+    matchups_node = unwrap(scoreboard, "matchups")
+    if matchups_node is None:
+        # Some responses nest the matchups collection under a numeric wrapper, the same
+        # shape ``_find_players_collection`` exists to survive on rosters.
+        for item in collection_items(scoreboard):
+            matchups_node = unwrap(item, "matchups")
+            if matchups_node is not None:
+                break
+
+    results: list[Matchup] = []
+    for entry in collection_items(matchups_node):
+        flat = flatten(unwrap(entry, "matchup") or entry)
+        week = _to_int(flat.get("week")) or 0
+        status = str(flat.get("status", "") or "")
+        is_playoffs = str(flat.get("is_playoffs", "0")) == "1"
+
+        sides = _matchup_sides(_find_teams_collection(flat))
+        if len(sides) != 2:
+            # A bye week or a malformed matchup. Skipped rather than guessed at: half a
+            # matchup would give one team an opponent that does not exist.
+            continue
+        for mine, theirs in (sides, sides[::-1]):
+            results.append(
+                Matchup(
+                    week=week,
+                    team_key=mine[0],
+                    opponent_key=theirs[0],
+                    points=mine[1],
+                    opponent_points=theirs[1],
+                    projected_points=mine[2],
+                    opponent_projected=theirs[2],
+                    is_playoffs=is_playoffs,
+                    status=status,
+                )
+            )
+    return results
+
+
+def _find_teams_collection(flat: dict[str, Any]) -> Any:
+    """A matchup's teams sit either directly on it or under a numeric wrapper.
+
+    The same one-level-deeper problem ``_find_players_collection`` exists for, and it
+    varies by endpoint the same way -- so look in both places rather than picking one and
+    returning an empty matchup when Yahoo picks the other.
+    """
+    direct = flat.get("teams")
+    if direct is not None:
+        return direct
+    for key, value in flat.items():
+        if isinstance(key, str) and key.isdigit():
+            found = unwrap(value, "teams")
+            if found is not None:
+                return found
+    return None
+
+
+def _matchup_sides(teams_node: Any) -> list[tuple[str, float | None, float | None]]:
+    """(team_key, points, projected) for each team in a matchup."""
+    sides: list[tuple[str, float | None, float | None]] = []
+    for entry in collection_items(teams_node):
+        flat = flatten(unwrap(entry, "team") or entry)
+        team_key = flat.get("team_key")
+        if not team_key:
+            continue
+        sides.append(
+            (
+                team_key,
+                _to_float(flatten(flat.get("team_points")).get("total")),
+                _to_float(flatten(flat.get("team_projected_points")).get("total")),
+            )
+        )
+    return sides
+
+
+def parse_transactions(payload: dict) -> list[Transaction]:
+    """Completed adds, drops and trades -- what the room actually did.
+
+    The winning FAAB bid is the number worth having: it is the in-season analog of an
+    auction sale price, and the only honest evidence of what this specific league pays.
+    """
+    league = unwrap(content(payload), "league")
+    node = unwrap(league, "transactions")
+
+    results: list[Transaction] = []
+    for entry in collection_items(node):
+        flat = flatten(unwrap(entry, "transaction") or entry)
+        transaction_key = flat.get("transaction_key")
+        if not transaction_key:
+            continue
+
+        added, dropped, team_key, source_type = _transaction_players(flat.get("players"))
+        results.append(
+            Transaction(
+                transaction_key=str(transaction_key),
+                type=str(flat.get("type", "") or ""),
+                status=str(flat.get("status", "") or ""),
+                timestamp=_to_float(flat.get("timestamp")),
+                added=added,
+                dropped=dropped,
+                team_key=team_key,
+                bid=_to_int(flat.get("faab_bid")),
+                source_type=source_type,
+            )
+        )
+    return results
+
+
+def _transaction_players(node: Any) -> tuple[tuple[str, ...], tuple[str, ...], str, str]:
+    """Split a transaction's players into what came in and what went out."""
+    added: list[str] = []
+    dropped: list[str] = []
+    team_key = ""
+    source_type = ""
+
+    for entry in collection_items(node):
+        flat = flatten(unwrap(entry, "player") or entry)
+        player_key = flat.get("player_key")
+        if not player_key:
+            continue
+        # ``transaction_data`` is a bare dict on some responses and a one-element list on
+        # others -- the same fragment-vs-object split the module header describes.
+        data = flatten(flat.get("transaction_data"))
+        movement = str(data.get("type", "") or "")
+        if movement == "add":
+            added.append(player_key)
+            team_key = team_key or str(data.get("destination_team_key", "") or "")
+            source_type = source_type or str(data.get("source_type", "") or "")
+        elif movement == "drop":
+            dropped.append(player_key)
+            team_key = team_key or str(data.get("source_team_key", "") or "")
+
+    return tuple(added), tuple(dropped), team_key, source_type
+
+
+# Yahoo stat id -> the projection column name the rest of the app speaks. Realized stats
+# have to land in the same vocabulary as projected ones or they cannot be compared, which
+# is the entire point of fetching them.
+_STAT_COLUMN_BY_ID: dict[int, str] = {
+    stat_id: column for column, stat_id in PROJECTION_STAT_IDS.items()
+}
+
+
+def parse_player_stats(payload: dict) -> dict[str, dict[str, float]]:
+    """Realized stat lines by player key, in the same column vocabulary as projections.
+
+    Stat ids the app cannot score are dropped rather than carried: they would sit in the
+    dict looking like data while ``engine.scoring`` ignored them, and a stat line that is
+    *partly* understood is the kind of thing that reads as complete.
+    """
+    league = unwrap(content(payload), "league")
+    players_node = unwrap(league, "players") if league is not None else None
+    if players_node is None:
+        players_node = unwrap(content(payload), "players")
+
+    results: dict[str, dict[str, float]] = {}
+    for entry in collection_items(players_node):
+        flat = flatten(unwrap(entry, "player") or entry)
+        player_key = flat.get("player_key")
+        if not player_key:
+            continue
+        stats_node = unwrap(flat.get("player_stats"), "stats")
+        line: dict[str, float] = {}
+        for stat_entry in collection_items(stats_node):
+            stat_flat = flatten(unwrap(stat_entry, "stat") or stat_entry)
+            column = _STAT_COLUMN_BY_ID.get(_to_int(stat_flat.get("stat_id")) or -1)
+            value = _to_float(stat_flat.get("value"))
+            if column is not None and value is not None:
+                line[column] = value
+        if line:
+            results[player_key] = line
+    return results
 
 
 def parse_players(payload: dict) -> list[YahooPlayer]:

@@ -131,7 +131,7 @@ def refresh(settings: Settings, token: Token) -> Token:
     if response.status_code != 200:
         raise AuthError(
             f"Token refresh failed ({response.status_code}): {response.text}\n"
-            "Re-run `python scripts/setup_auth.py` to sign in again."
+            "Re-run `uv run python scripts/setup_auth.py` to sign in again."
         )
     payload = response.json()
     # Yahoo usually returns a fresh refresh_token, but tolerate it being absent.
@@ -143,7 +143,7 @@ def get_valid_token(settings: Settings) -> Token:
     """Load the cached token, refreshing it if needed. Never triggers interactive login."""
     token = Token.load()
     if token is None:
-        raise AuthError("Not signed in to Yahoo yet. Run:\n    python scripts/setup_auth.py")
+        raise AuthError("Not signed in to Yahoo yet. Run:\n    uv run python scripts/setup_auth.py")
     if token.expired:
         token = refresh(settings, token)
         token.save()

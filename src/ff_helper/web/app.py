@@ -412,7 +412,7 @@ def bootstrap(
     league_key = league_key or settings.league_key
     if not league_key:
         raise SystemExit(
-            "No league key.\nRun `python scripts/setup_auth.py` to list your leagues, then "
+            "No league key.\nRun `uv run python scripts/setup_auth.py` to list your leagues, then "
             "either paste the key into .env as FF_LEAGUE_KEY or pass --league."
         )
 
@@ -420,7 +420,7 @@ def bootstrap(
     if snapshot is None:
         raise SystemExit(
             f"No ranking snapshot found for {league_key}.\n"
-            f"Run `python scripts/fetch_rankings.py --league {league_key}` first "
+            f"Run `uv run python scripts/fetch_rankings.py --league {league_key}` first "
             "(ideally the day before your draft)."
         )
     if snapshot.age_hours > 48:
@@ -491,7 +491,7 @@ def bootstrap_offline(config_path: Path, keeper_csv: Path | None = None) -> Assi
         raise SystemExit(
             f"No ranking snapshot found for {league.name} "
             f"(looked for {config.snapshot_key}).\n"
-            f"Run `python scripts/fetch_rankings.py --offline {config_path}` first, or set "
+            f"Run `uv run python scripts/fetch_rankings.py --offline {config_path}` first, or set "
             "'snapshot_league_key' in the config to borrow another league's."
         )
     if config.snapshot_key != league.league_key:

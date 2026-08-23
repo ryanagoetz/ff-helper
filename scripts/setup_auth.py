@@ -4,7 +4,7 @@
 Run this once on your own machine. It caches a refresh token to ~/.ff-helper/token.json,
 after which the app renews access tokens on its own and you never sign in again.
 
-    python scripts/setup_auth.py
+    uv run python scripts/setup_auth.py
 
 The flow deliberately avoids running a local HTTPS callback server. Yahoo requires an
 HTTPS redirect URI, which would mean generating and trusting a self-signed certificate --

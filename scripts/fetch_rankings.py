@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the ranking snapshot. Run this the day before your draft.
 
-    python scripts/fetch_rankings.py
+    uv run python scripts/fetch_rankings.py
 
 Fetches the Yahoo player pool (with Yahoo's own ADP), FantasyFootballCalculator ADP, and
 FantasyPros consensus rankings, then writes everything to ~/.ff-helper/cache/ so draft
@@ -9,7 +9,7 @@ day does not depend on the network.
 
 Projections come from a CSV export instead of a scrape:
 
-    python scripts/fetch_rankings.py --projections 4for4-projections.csv
+    uv run python scripts/fetch_rankings.py --projections 4for4-projections.csv
 
 FantasyPros put full projections behind a registration fence and now serves ten rows per
 position to signed-out callers, which is not enough to derive replacement level from.

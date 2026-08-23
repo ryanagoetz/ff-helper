@@ -15,6 +15,11 @@ build/
 # Projection and keeper CSVs. Exports from a paid subscription are not ours to
 # redistribute, and this repo is public.
 *.csv
+# Test fixtures are the exception: the suite does not run without them. They use real
+# player names -- name matching is what most of them exercise, so invented names would
+# test nothing -- with hand-written numbers, not rows lifted from a paid export. Keep it
+# that way: if a fixture ever needs to grow, type the numbers, do not paste them.
+!tests/fixtures/*.csv
 
 # Everything in data/ is gitignored by default -- a league config carries a real league
 # ID and your leaguemates' team names, and projection/keeper exports are not ours to
@@ -29,6 +34,7 @@ data/*
 data/drafts/*
 !data/drafts/.gitkeep
 !data/drafts/2025-shiva-snake.json
+!data/drafts/2026-bustamove-auction.json
 
 # Personal draft-day runbook -- names the real league and its teams throughout.
 MOCK-DRAFT.md

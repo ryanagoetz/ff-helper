@@ -1,0 +1,120 @@
+{
+  "clean_ruled_out": {
+    "title": "Bengals rule out Chase for Sunday",
+    "url": "https://www.4for4.com/news/chase-out",
+    "text": "The Cincinnati Bengals have ruled out Ja'Marr Chase for Sunday's game against Baltimore. Chase did not travel with the team. Cincinnati will lean on its running game. The team has not offered a timeline for a return. Cincinnati has dealt with injuries at the position all year, and the coaching staff said it would evaluate the rotation through the weekend.",
+    "expect_flags": [
+      [
+        "461.p.1",
+        "RULED_OUT"
+      ]
+    ],
+    "why": "The plainest possible case. If this does not fire, nothing does."
+  },
+  "negated_ruled_out": {
+    "title": "Chase avoids being ruled out",
+    "url": "https://www.4for4.com/news/chase-not-out",
+    "text": "Despite missing Wednesday, Ja'Marr Chase has not been ruled out for Sunday. The team expects a decision Friday. Cincinnati remains hopeful about its receiver room. The staff said a final call would come after Friday's session. Cincinnati has been cautious with soft-tissue issues all year and has generally erred toward extra rest when the schedule allows.",
+    "expect_flags": [],
+    "why": "The trigger phrase is present and the sentence asserts the opposite. Applying it would zero a starter who plays."
+  },
+  "past_tense_ruled_out": {
+    "title": "Walker back at practice",
+    "url": "https://www.4for4.com/news/walker-back",
+    "text": "Kenneth Walker III was ruled out last week but has been a full participant in every practice since. Seattle expects his usual workload against Arizona. The backfield returns to normal this weekend. Seattle's staff said it was pleased with how he moved during Thursday's session. The team has managed his workload carefully through the middle of the schedule.",
+    "expect_flags": [],
+    "why": "Reporting about a previous week. A digest that reads the archive as current is worse than one that reads nothing."
+  },
+  "two_players_one_sentence": {
+    "title": "Two out for Chicago",
+    "url": "https://www.4for4.com/news/chicago-injuries",
+    "text": "The Bears have ruled out Rome Odunze and Cole Kmet for the trip to Green Bay. Both were limited all week. Chicago promotes from the practice squad to fill the roster spots. Chicago has been thin at both spots for several weeks now. The staff said the moves were made with the travel schedule in mind and declined to speculate about availability beyond this weekend.",
+    "expect_flags": [
+      [
+        "461.p.3",
+        "RULED_OUT"
+      ],
+      [
+        "461.p.7",
+        "RULED_OUT"
+      ]
+    ],
+    "why": "One sentence, two players, one fact each. Attaching the flag to only the first name is the easy bug."
+  },
+  "ambiguous_initial": {
+    "title": "Robinson ruled out",
+    "url": "https://www.4for4.com/news/robinson-out",
+    "text": "Head coach confirmed that B. Robinson has been ruled out for Sunday with an ankle injury. The team did not elaborate on a timeline. Expect a heavier snap share for the rest of the backfield. The staff declined to expand on the severity. Beat reporters noted that the player was seen leaving the facility without a walking boot, which is generally taken as an encouraging sign.",
+    "expect_flags": [],
+    "why": "Two Robinsons in the pool. The crosswalk refuses to guess, and a wrong attribution here zeroes the wrong starter."
+  },
+  "committee": {
+    "title": "Seattle moving to a committee",
+    "url": "https://www.4for4.com/news/seattle-backfield",
+    "text": "Seattle intends to split the carries the rest of the way. Kenneth Walker III will remain involved but the staff described the backfield as a committee going forward. That is a meaningful change from earlier in the season. The staff framed the change as a matter of keeping legs fresh into December. Seattle has leaned heavily on one back for most of the schedule and wants to spread the workload from here.",
+    "expect_flags": [
+      [
+        "461.p.2",
+        "BACKFIELD_COMMITTEE"
+      ]
+    ],
+    "why": "A role change, not an injury -- different family, different expiry, and it stacks with availability rather than replacing it."
+  },
+  "promotion": {
+    "title": "Odunze named the starter",
+    "url": "https://www.4for4.com/news/odunze-starts",
+    "text": "Rome Odunze will start on the outside for the remainder of the season, the coaching staff confirmed on Wednesday. The move follows several weeks of rising snap counts. Chicago wants to see what it has. The staff said the decision followed weeks of internal discussion. Chicago has shuffled its perimeter grouping several times already this season without settling on a consistent arrangement.",
+    "expect_flags": [
+      [
+        "461.p.3",
+        "PROMOTED_TO_STARTER"
+      ]
+    ],
+    "why": "The only upside flag matched from text. Worth a test precisely because it moves a number the wrong way if the family logic is broken."
+  },
+  "weather": {
+    "title": "Wind in Buffalo",
+    "url": "https://www.4for4.com/news/buffalo-weather",
+    "text": "Forecasters expect sustained winds of 25 mph at kickoff in Buffalo on Sunday afternoon. Josh Allen and the passing game face the worst of it. Both teams are expected to lean run-heavy. Stadium operations said no changes are planned for the seating bowl. Kickoff remains scheduled for one o'clock local time, and both clubs practiced outdoors on Friday in similar conditions.",
+    "expect_flags": [],
+    "why": "Weather is a property of a GAME, and this extractor is scoped to a player and a sentence. The forecast sentence names nobody; the players it bears on appear two sentences later. Bridging that would need an 'apply to anyone mentioned nearby' rule, which is the guessing the extractor refuses everywhere else. The flag stays defined for a real forecast source keyed to the game; from prose it must fire on nobody rather than on whoever happens to be adjacent."
+  },
+  "questionable": {
+    "title": "Chase questionable",
+    "url": "https://www.4for4.com/news/chase-questionable",
+    "text": "Ja'Marr Chase is listed as questionable for Sunday with a hamstring issue. He was a limited participant on Friday. Cincinnati has not said whether he will be on a snap count. The staff said a decision would come closer to kickoff. Cincinnati has generally listed players on the injury report through Friday even when they end up playing a full complement of snaps.",
+    "expect_flags": [
+      [
+        "461.p.1",
+        "QUESTIONABLE"
+      ]
+    ],
+    "why": "The common case, and the one that must not double-count against Yahoo's own questionable tag."
+  },
+  "pure_fluff": {
+    "title": "Week 7 preview",
+    "url": "https://www.4for4.com/news/week-7-preview",
+    "text": "Ja'Marr Chase has been excellent this season and Kenneth Walker III has quietly been a weekly RB2. Rome Odunze is trending up. This is shaping up to be one of the better slates of the year, with several games carrying real fantasy consequence.",
+    "expect_flags": [],
+    "why": "Analysis with no reportable fact in it. Must yield zero flags -- a vocabulary that fires on vibes is worse than none."
+  },
+  "boilerplate_only": {
+    "title": "Subscribe",
+    "url": "https://www.4for4.com/subscribe",
+    "text": "Sign in to your account to continue reading about Ja'Marr Chase and Kenneth Walker III. Subscribe today for full access. Terms of service and privacy policy apply to all subscribers of this service. Sign in to continue. Subscribe today for full access to all of our tools and analysis throughout the season and into the postseason, including every weekly report we publish.",
+    "expect_flags": [],
+    "why": "A nav blob caught by innerText. Should produce nothing at all, not a caveat on every player it names."
+  },
+  "limited_snaps": {
+    "title": "Walker on a snap count",
+    "url": "https://www.4for4.com/news/walker-snaps",
+    "text": "Kenneth Walker III is expected to be on a snap count in his first game back. Seattle has been cautious with him all month. He should still see goal-line work. The staff has been deliberate about his return to full work. Seattle has a favourable stretch of schedule ahead and has said repeatedly that it is thinking about the long run rather than any single weekend.",
+    "expect_flags": [
+      [
+        "461.p.2",
+        "LIMITED_SNAPS"
+      ]
+    ],
+    "why": "Availability family, but not an injury designation -- it must not stack with questionable."
+  }
+}
