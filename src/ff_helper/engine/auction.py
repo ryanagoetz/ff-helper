@@ -10,8 +10,12 @@ The questions that replace it are:
 
 1. **What is he worth, in dollars?** VOR converts to money once you know how much money
    exists and how much value it is chasing.
-2. **What will the room pay?** That is Yahoo's ``average_cost`` -- the auction analog of
-   ADP, and just as separate from value as ADP is.
+2. **What will the room pay?** Yahoo's ``average_cost`` where it exists -- the auction
+   analog of ADP, and just as separate from value as ADP is. Where it does not (an offline
+   league whose projections CSV carries no auction column; any league once the last priced
+   player has been sold) ``PriceBasis`` falls back through interpolation to the room's own
+   observed pricing, and finally to my own worth. Those are not equally good evidence, and
+   which consumer may read which is that class's whole subject.
 3. **What can I actually afford?** A hard constraint, not advice.
 
 The gap between (1) and (2) is where an auction is won, and it is the direct analog of
@@ -58,6 +62,22 @@ _DART_PRICE_CEILING = 3.0
 # last man standing at $1 they are the *choices* a slot really has: pay up now, wait a
 # beat, punt a while, or punt entirely.
 _LADDER_OFFSETS = (0, 2, 5)
+
+# Slack for the budget plan's break-even test, in dollars. Not a fudge factor: the
+# marginal is a difference of two DP totals that share most of their terms, and for the
+# best remaining player at a position whose dedicated slots are full it is *exactly* zero
+# in real arithmetic -- the plan's top rung for that slot is the candidate himself, so
+# buying him and planning to buy him are the same basket. Floating-point summation then
+# lands a hair either side of zero, and a strict ``< 0`` read the tie as "worse". A
+# hundredth of a cent is far below any dollar difference the model can mean, and far
+# above the ~1e-14 noise of summing fifteen dollar values.
+_PLAN_EPSILON = 1e-4
+
+# Qualifying sales before the room's own pricing counts as a price at all. Deliberately a
+# separate constant from ``_PREMIUM_PRIOR_GLOBAL`` even though they start equal: that one is
+# a shrinkage weight (how hard to pull a ratio toward 1.0), this one is a sample-size floor,
+# and retuning the smoothing must not silently relocate the evidence gate.
+_ROOM_BASIS_MIN_SALES = 8
 
 
 @dataclass(frozen=True)
@@ -195,6 +215,10 @@ class RoomPremiums:
 
     overall: float = 1.0
     by_position: dict[str, float] = field(default_factory=dict)
+    # Qualifying sales behind these ratios. Reported because a premium of 1.0 is two
+    # completely different statements -- "the room pays sheet price" and "no evidence
+    # yet" -- and ``PriceBasis`` has to tell them apart.
+    observations: int = 0
 
     def at(self, position: str) -> float:
         return self.by_position.get(position, self.overall)
@@ -229,6 +253,7 @@ def room_premiums(sales: list[Sale]) -> RoomPremiums:
             / (_PREMIUM_PRIOR_POSITION + len(group))
             for position, group in by_position.items()
         },
+        observations=len(ratios),
     )
 
 
@@ -272,6 +297,100 @@ def _estimate_markets(
     return estimates
 
 
+@dataclass(frozen=True)
+class PriceBasis:
+    """What a player will cost -- and how much weight that number can carry.
+
+    Two questions this module spent a long time conflating, because both were answered by
+    reaching into one dict of prices and substituting my own worth wherever it came back
+    empty. That fallback is circular in a specific way: the more a player is worth to me
+    the higher his stand-in price, so any consumer reading the price as a *constraint*
+    punished exactly the players it should have been promoting.
+
+    Splitting it needs three tiers of price, not two, because they carry different things:
+
+    * **published** -- a source's own auction cost. Real information about this player.
+    * **interpolated** -- ``_estimate_markets``, reading an unpriced player's price off the
+      published prices at neighbouring par values. Ordered by my par, but *levelled* by
+      other players' real prices, so it still says something about him specifically.
+    * **room** -- his par scaled by what this room has actually paid per dollar of par at
+      his position. The level is real money that changed hands; the ordering within the
+      position is entirely mine. It says what the position costs, not what *he* costs.
+
+    The room tier fires when no *still-available* player carries a published cost --
+    ``_estimate_markets`` is all-or-nothing, so one published price fills in the whole
+    board. That is not only the offline case: a live league lands here too, once the last
+    player Yahoo priced has been sold, which is mid-draft rather than never. Offline it
+    depends on the projections CSV, which ``rankings/sources/projections_csv.py`` will read
+    an auction column from if the export has one -- so an offline league is priceless only
+    when its CSV is, not by construction. Before this tier existed, every consumer in that
+    state silently ran on my own worth.
+
+    So the two accessors take different evidence:
+
+    ``market_price`` is published-or-interpolated only, and is what affordability, surplus
+    and the plan-marginal score read. Those are claims about an individual -- "you cannot
+    win him", "he is mispriced by $12" -- and the room tier cannot support one, because
+    within a position it is my own ranking wearing the room's price level. Letting it try
+    reintroduced the original bug in gentler form.
+
+    ``estimate`` takes all three and falls back to my inflation-adjusted worth, because a
+    budget reservation has to name a number and refusing to guess just means guessing $1.
+    Here the room tier is exactly right: "what will a receiver of about this quality cost
+    me" is the positional question it can answer.
+
+    Measured on the one recorded auction (full replay / policy from pick 45 / compared
+    through pick 95), against the same tiers with the room tier promoted into
+    ``market_price`` as well:
+
+        policy       budgeting only              + affordability
+        engine       1460.4 / 1442.5 / 1430.8    1460.4 / 1442.5 / 1430.8
+        engine_list  1442.5 / 1442.5 / 1412.9    1352.9 / 1352.9 / 1352.9
+
+    Identical where the tier is only advice, strictly worse in all three where it reorders
+    the short list -- ``engine_list`` is the arm that reads the display, so a wrongly
+    unaffordable flag is exactly what it feels. Re-measure both columns if the plan or the
+    ranking changes; these were taken with ``_PLAN_EPSILON`` in force.
+    """
+
+    published: dict[str, float]
+    interpolated: dict[str, float]
+    room: dict[str, float]
+    own_worth: dict[str, float]
+
+    def market_price(self, player_key: str) -> float | None:
+        """What the room will pay *for him*, or ``None`` if nothing knows.
+
+        Deliberately excludes the room tier; see the class docstring for the measurement
+        that settled it.
+        """
+        for tier in (self.published, self.interpolated):
+            price = tier.get(player_key)
+            if price is not None:
+                return price
+        return None
+
+    def estimate(self, player_key: str) -> float:
+        """The going rate if anything knows it, else my own inflation-adjusted worth.
+
+        Subscripts ``own_worth`` rather than defaulting: every dict here is built over the
+        same ``available`` list in one pass, so a missing key means the caller assembled a
+        basis over a different pool than it is now pricing. Defaulting to $1 there would
+        quietly hand an open starter slot a $1 reservation and inflate the smart cap with
+        no error -- and this repo's rule for a lookup miss is that it gets reported, never
+        silently absorbed. ``_price_ladder`` already subscripts this dict; now both agree.
+        """
+        for tier in (self.published, self.interpolated, self.room):
+            price = tier.get(player_key)
+            if price is not None:
+                return price
+        return self.own_worth[player_key]
+
+    def is_inferred(self, player_key: str) -> bool:
+        """True when a market price exists but no source published this one."""
+        return player_key in self.interpolated
+
+
 def _dollars(amount: float) -> int:
     """Whole dollars, halves rounding up.
 
@@ -284,8 +403,7 @@ def _dollars(amount: float) -> int:
 def _price_ladder(
     pool: list[PlayerValuation],
     demand_index: int,
-    expected_of: dict[str, float | None],
-    adjusted_of: dict[str, float],
+    basis: PriceBasis,
 ) -> list[tuple[int, float]]:
     """The realistic ways to fund one slot at this position: (price, my value) rungs.
 
@@ -298,6 +416,13 @@ def _price_ladder(
     plan decides per slot whether to pay up, settle, or punt, and two same-position
     slots sharing the top rung is an accepted approximation -- ladders choose depth,
     not individual players.
+
+    A rung's price is ``basis.estimate``, so with no market at all every rung costs exactly
+    what it is worth and the plan degenerates: a knapsack whose weights equal its values
+    can only fill the budget, and ``plan_bid`` collapses to "his worth, capped". That is
+    the correct answer for a model with no price information -- it is what the no-plan
+    branch says too -- but it is not a break-even, which is why ``PriceBasis`` works to
+    keep a real price in here for as long as there is one.
     """
     if not pool:
         return []
@@ -309,10 +434,8 @@ def _price_ladder(
     ladder: list[tuple[int, float]] = []
     for index in indices:
         chosen = pool[index]
-        price = expected_of.get(chosen.player_key)
-        if price is None:
-            price = adjusted_of[chosen.player_key]
-        ladder.append((max(MIN_BID, _dollars(price)), adjusted_of[chosen.player_key]))
+        price = basis.estimate(chosen.player_key)
+        ladder.append((max(MIN_BID, _dollars(price)), basis.own_worth[chosen.player_key]))
     return ladder
 
 
@@ -369,7 +492,9 @@ class AuctionRecommendation:
     depth_factor: float
     score: float
     reason: str
-    # True when the market price was interpolated rather than published by a source.
+    # True when ``market`` was interpolated across the players a source did price, rather
+    # than published for this one. Room-derived prices never appear here, because they are
+    # not ``market`` at all -- see ``PriceBasis`` for why they only inform budgeting.
     market_estimated: bool
     # Softer ceiling than max_bid: what you can pay and still fill your remaining
     # *starter* slots at realistic prices, not $1 apiece.
@@ -435,16 +560,56 @@ def recommend_auction(
 
     # Worth and calibrated expected price for the whole pool, before any ranking: the
     # budget reservations below need prices for players that may never be recommended.
+    # Three tiers, best evidence first; ``PriceBasis`` decides who may read which.
+    #
+    # The room tier is the new one, and it exists because ``room_premiums`` was already
+    # measuring what this room pays per dollar of par and the result was then thrown away:
+    # the premium multiplied a sheet price, and with no sheet price there was nothing to
+    # multiply. Scaling par by it instead is self-consistent -- ``Sale.expected`` falls back
+    # to par, so the ratio was measured against this very basis -- and it is the only price
+    # information an offline league ever gets.
+    #
+    # It needs enough sales to *be* an observation, which is what ``_ROOM_BASIS_MIN_SALES``
+    # is for: with nothing sold the premium is exactly 1.0, and that means "no evidence yet"
+    # rather than "the room pays par" -- without a floor the tier would price the whole board
+    # off a prior before anyone had bid on anything. The gate is a step, not a ramp, so the
+    # sale that crosses it moves every unpriced player's basis at once, and that step is
+    # *not* self-limiting: its size is ``|par * premium - adjusted|``, which is driven by
+    # ``inflation``, a quantity the premium's shrinkage has no hold on. Measured at pick 60
+    # of the recorded auction (inflation 1.74, WR premium 1.13) one rung moved $39.9 -> $26.3
+    # the instant the eighth sale landed, of which the premium explains a third. Raising
+    # ``_ROOM_BASIS_MIN_SALES`` delays the step; nothing here shrinks it.
     adjusted_of: dict[str, float] = {}
-    expected_of: dict[str, float | None] = {}
+    published_of: dict[str, float] = {}
+    interpolated_of: dict[str, float] = {}
+    room_of: dict[str, float] = {}
+    room_basis_ready = premiums.observations >= _ROOM_BASIS_MIN_SALES
     for valuation in available:
         key = valuation.player_key
         par = values.value_of(key)
         adjusted_of[key] = MIN_BID + (par - MIN_BID) * inflation
-        base = valuation.market_cost
-        if base is None:
-            base = estimated_markets.get(key)
-        expected_of[key] = base * premiums.at(valuation.position) if base is not None else None
+        premium = premiums.at(valuation.position)
+        if valuation.market_cost is not None:
+            published_of[key] = max(float(MIN_BID), valuation.market_cost * premium)
+        elif (interpolated := estimated_markets.get(key)) is not None:
+            interpolated_of[key] = max(float(MIN_BID), interpolated * premium)
+        elif room_basis_ready:
+            # ``par``, not ``adjusted``: the premium was measured as paid-over-par, so this
+            # is the basis it belongs on. Tried the alternative -- take the level from
+            # ``adjusted`` and only the positional tilt from the premium, which is tidier
+            # dimensionally -- and the backtest refused it (engine 1460.4 -> 1350.6 full,
+            # 1430.8 -> 1287.4 through pick 95). On the one recorded auction the room paid
+            # near par throughout while ``inflation`` sat pinned at its 3.0 clamp, so
+            # ``adjusted`` was the worse price predictor by a wide margin. The reservation
+            # is bounded below instead; see ``starter_reserved``.
+            room_of[key] = max(float(MIN_BID), par * premium)
+
+    basis = PriceBasis(
+        published=published_of,
+        interpolated=interpolated_of,
+        room=room_of,
+        own_worth=adjusted_of,
+    )
 
     open_dedicated, open_flex, backups = assign_lineup(roster_counts, settings)
 
@@ -520,10 +685,7 @@ def recommend_auction(
         ladder: list[float] = []
         for offset in range(count):
             chosen = pool[min(demand_index_of(position) + offset, len(pool) - 1)]
-            price = expected_of.get(chosen.player_key)
-            if price is None:
-                price = adjusted_of[chosen.player_key]
-            ladder.append(max(float(MIN_BID), price))
+            ladder.append(max(float(MIN_BID), basis.estimate(chosen.player_key)))
         return ladder
 
     # Reservation for each position's open dedicated slots, cheapest rung last.
@@ -547,6 +709,16 @@ def recommend_auction(
     starter_slots_open = sum(open_dedicated.values()) + sum(count for _, count in open_flex)
     my_open_slots = max(0, (settings.roster_size or 0) - sum(roster_counts.values()))
     bench_open = max(0, my_open_slots - starter_slots_open)
+
+    # A reservation larger than my budget drives every position's ``smart_cap`` to 0, so
+    # ``bid_to`` is 0 board-wide and ``rank_key`` -- which leads on ``bid_to <= 0`` -- sorts
+    # everyone into one bucket. Any price source can trigger it; a room paying 1.5x par is
+    # enough. Tried scaling the ladders to fit the budget, which keeps the relative ordering
+    # and drops only the level: the backtest refused it (engine_list 1442.5 -> 1380.9 full,
+    # 1412.9 -> 1317.7 through pick 95, engine unchanged). The zero is doing real work --
+    # when the open starters genuinely cost more than I hold, "do not bid" is the correct
+    # advice, and softening it bought worse players. Left as is, deliberately, and noted
+    # here so the next person does not re-derive the same rejected fix.
     total_reserved = starter_reserved + bench_open * MIN_BID
 
     def smart_cap_for(position: str) -> int:
@@ -592,12 +764,7 @@ def recommend_auction(
             needs.extend([eligible] * count)
 
         ladder_of = {
-            position: _price_ladder(
-                pool,
-                demand_index_of(position),
-                expected_of,
-                adjusted_of,
-            )
+            position: _price_ladder(pool, demand_index_of(position), basis)
             for position, pool in by_position.items()
         }
         options = [
@@ -650,16 +817,36 @@ def recommend_auction(
             show "bid to $45". Below worth the search carries the real signal ("stop
             at $87 though he is worth $90; the rest is spoken for"); above worth it
             only ever measured the slack.
+
+            Both comparisons carry ``_PLAN_EPSILON`` because a marginal of exactly zero is
+            the *common* case, not a coincidence: whenever the plan's own choice for the
+            slot he would fill is him, buying him and planning to buy him are the same
+            basket and the difference is algebraically nil. Reading that tie as "worse" --
+            which is what a strict ``< 0`` did, on noise of order 1e-14 -- returned a bid of
+            $0 for the best remaining player at any position whose dedicated slots were
+            already full, and ``rank_key`` leads on ``bid_to <= 0``, so he did not merely
+            look cheap, he left the short list entirely. Seen live: a back worth $51 with
+            $34 still to spend, ranked 214th.
+
+            Measured on the recorded auction (full replay / policy from pick 45 / compared
+            through pick 95), strict ``< 0`` against the tolerance:
+
+                policy       strict                      with epsilon
+                engine       1460.4 / 1392.3 / 1430.8    1460.4 / 1442.5 / 1430.8
+                engine_list  1367.9 / 1367.9 / 1367.9    1442.5 / 1442.5 / 1412.9
+
+            The gain lands on ``engine_list`` because a ``bid_to`` of 0 does not merely
+            misprice a player on the short list, it removes him from it.
             """
             ceiling = min(my_max_bid, _dollars(adjusted))
             if ceiling < MIN_BID:
                 return 0
-            if adjusted + plan_after(position, MIN_BID) - base_plan < 0:
+            if adjusted + plan_after(position, MIN_BID) - base_plan < -_PLAN_EPSILON:
                 return 0
             low, high = MIN_BID, ceiling
             while low < high:
                 mid = (low + high + 1) // 2
-                if adjusted + plan_after(position, mid) - base_plan >= 0:
+                if adjusted + plan_after(position, mid) - base_plan >= -_PLAN_EPSILON:
                     low = mid
                 else:
                     high = mid - 1
@@ -671,8 +858,8 @@ def recommend_auction(
         par = values.value_of(key)
         adjusted = adjusted_of[key]
 
-        market = expected_of[key]
-        market_estimated = valuation.market_cost is None and market is not None
+        market = basis.market_price(key)
+        market_estimated = basis.is_inferred(key)
         surplus = (adjusted - market) if market is not None else None
 
         need = factor_for(valuation.position)
@@ -681,15 +868,20 @@ def recommend_auction(
         # You cannot win a player whose going rate is above your ceiling, however much you
         # like him. Rank those below everyone you can actually buy.
         #
-        # Only a price from *outside* me can say I am priced out. With no market signal
-        # ``expected_price`` falls back to my own inflation-adjusted worth, and "I value
-        # him above my remaining budget" is a different statement from "I cannot win him"
-        # -- reading the first as the second is circular, and the more a player was worth
-        # to me the further down he sorted. Late in a draft nearly every player has lost
-        # his market signal, which is where it bit: a back worth $31 to me, who sold for
-        # $14, ranked 214th of 457. Unknown price is treated as no evidence, not as bad
-        # evidence; ``bid_to`` is still a minimum against ``my_max_bid``, so nothing here
-        # can recommend a bid that cannot be made.
+        # Only a price from *outside* me can say I am priced out, which is exactly the
+        # distinction ``PriceBasis`` draws: ``market_price`` is ``None`` when nothing but my
+        # own sheet has an opinion, and "I value him above my remaining budget" is a
+        # different statement from "I cannot win him". Reading the first as the second is
+        # circular, and it sorted a player further down the more he was worth to me -- a
+        # back worth $31, who sold for $14, ranked 214th of 457. Unknown price is no
+        # evidence, not bad evidence; ``bid_to`` is still a minimum against ``my_max_bid``,
+        # so nothing here can recommend a bid that cannot be made.
+        # Not ``basis.estimate``: its only live consumer is the dart ceiling below, and
+        # "he will go for pocket change" is a claim about an *individual*, which the class
+        # docstring reserves for ``market_price``. Routing the room tier in here made the
+        # gate say "I rank him low" instead of "he will be cheap" -- the mirror of the
+        # original circularity, promoting players I value poorly rather than demoting ones
+        # I value highly. Measured: it moved 32 of 206 players across the $3 ceiling.
         expected_price = market if market is not None else adjusted
         affordable = market is None or market <= my_max_bid
 
@@ -709,9 +901,14 @@ def recommend_auction(
                 0.6 * (surplus if surplus is not None else 0.0) + 0.4 * adjusted, need
             )
         if plan_mode:
-            # The break-even bid stands either way: even without a market to rank
-            # against, "the price where buying him stops beating the rest of the plan"
-            # is exactly what to stop bidding at.
+            # The break-even bid is computed either way, but how much it can say depends on
+            # what priced the ladder. With real prices in it -- published, interpolated, or
+            # the room's own -- "the price where buying him stops beating the rest of the
+            # plan" is a genuine trade against the alternatives. With none of those the
+            # rungs cost exactly what they are worth (see ``_price_ladder``), the plan can
+            # no longer tell paying up from settling, and ``plan_bid`` degenerates to his
+            # capped worth -- which is what the no-plan branch would have said anyway, so
+            # it is harmless, just not the break-even the name promises.
             plan_bid_of[key] = plan_bid_for(valuation.position, adjusted)
         if valuation.is_injured:
             score = penalized(score, _INJURY_RESIDUAL)
@@ -757,7 +954,6 @@ def recommend_auction(
                     held,
                     affordable,
                     my_max_bid,
-                    expected_price,
                     market_estimated,
                     smart_cap,
                     plan_bid_of.get(key),
@@ -776,6 +972,15 @@ def recommend_auction(
     # when the list matters most -- a room where eleven of the top twelve rows read "bid
     # $0" is not a short list, and the players you can actually buy fall off the bottom of
     # it. Ranking, not valuation: nothing about what a player is worth changes here.
+    # A board where every row reads "bid $0" is reachable and not rare -- any reservation
+    # exceeding my budget zeroes every position's smart cap at once, and a room paying 1.5x
+    # par is enough. The advice is right there (if my open starters really cost more than I
+    # hold, "do not bid" is correct; softening the cap to avoid saying so measurably bought
+    # worse players -- see ``starter_reserved``), and the *order* survives it too: with the
+    # leading term constant, the tuple falls through to affordability and then score, which
+    # is the right question when every answer to "can I afford him" is no. Tried special-
+    # casing the all-zero board to sort by score explicitly; it is exactly what this already
+    # does, and the backtest was identical to the digit.
     recommendations.sort(key=rank_key)
     return recommendations[:limit]
 
@@ -811,7 +1016,6 @@ def _explain(
     held: int,
     affordable: bool,
     my_max_bid: int,
-    expected_price: float,
     market_estimated: bool,
     smart_cap: int,
     plan_bid: int | None = None,

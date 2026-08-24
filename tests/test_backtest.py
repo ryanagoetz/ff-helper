@@ -349,6 +349,61 @@ class TestAuctionCounterfactual:
         assert early <= held, "a pre-cutoff buy of mine went missing"
         assert len(result.players) == record.league.settings.roster_size
 
+    def test_stop_after_drops_my_post_cutoff_buys_from_every_policy(self, auction_world):
+        """The contract: past the cut nobody bids for me -- ``actual`` included.
+
+        Regression on the way that failed. A declined buy of mine looks for a rival who
+        could have outbid me, and when none can the fallback used to be "leave him with the
+        recorded buyer" -- but in that branch the recorded buyer IS me, at ``cost=None``,
+        which ``DraftState.spent`` reads as $0. So the flag whose whole job is to exclude
+        the post-cut stretch handed those exact players back, free. It bit hardest late in a
+        draft, when every rival is full, which is the stretch ``stop_after`` exists to cut.
+        """
+        record, snapshot = auction_world
+        mine = record.my_team.team_key
+        last = max(pick.pick for pick in record.picks)
+        # Several cutoffs, including one early enough that declining almost everything
+        # fills the rivals up -- that is the state where `_deepest_pocket` finds nobody and
+        # the buggy fallback fired. A single mid-draft cutoff never reaches it.
+        for cutoff in (1, last // 4, last // 3, last // 2):
+            recorded_late = {
+                pick.pick for pick in record.picks if pick.team_key == mine and pick.pick > cutoff
+            }
+            assert recorded_late, f"cutoff {cutoff} leaves no post-cutoff buys of mine"
+
+            for policy in AUCTION_POLICIES:
+                result = auction_counterfactual(
+                    record, snapshot, policy=policy, stop_after=cutoff
+                )
+                kept = {pick for pick, _, _ in result.players} & recorded_late
+                assert not kept, f"{policy} kept post-cutoff buys {sorted(kept)} at {cutoff}"
+                # The two invariants the other policies get, which `actual` now needs too.
+                assert len(result.players) == record.league.settings.roster_size, policy
+                assert result.spent <= record.league.settings.auction_budget, policy
+
+    def test_stop_after_fills_actual_like_everyone_else(self, auction_world):
+        """``actual`` must not keep its real endgame while the others get a greedy one.
+
+        That asymmetry would make the table measure the cut rather than the advice.
+        """
+        record, snapshot = auction_world
+        last = max(pick.pick for pick in record.picks)
+        cut = auction_counterfactual(record, snapshot, policy="actual", stop_after=last // 3)
+        whole = auction_counterfactual(record, snapshot, policy="actual")
+        assert {p for p, _, _ in cut.players} != {p for p, _, _ in whole.players}
+        assert len(cut.players) == len(whole.players)
+
+    def test_a_cutoff_before_the_handover_is_refused(self, auction_world):
+        """Both flags together leave the policy no picks, so all four rows come back equal.
+
+        A comparison that measures nothing must not print as though it measured something.
+        """
+        record, snapshot = auction_world
+        with pytest.raises(ValueError, match="follow_from"):
+            auction_counterfactual(
+                record, snapshot, policy="engine", follow_from=80, stop_after=20
+            )
+
     def test_follow_from_none_lets_the_policy_choose_from_the_first_sale(self, auction_world):
         # The complement: with no hand-over the policy owns every decision, so its roster
         # must be free to diverge from mine. If these matched, follow_from would be inert.

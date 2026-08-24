@@ -459,6 +459,197 @@ class TestMarketEstimation:
         assert names.index("RB2") < names.index("RB3")
 
 
+class TestPriceBasisTiers:
+    """An unpriced board -- the permanent state of an offline league.
+
+    No source supplies an auction cost, so ``market_cost`` is ``None`` for everyone and
+    ``_estimate_markets`` has nothing to interpolate from. Every price the engine uses here
+    is either the room's own observed pricing or my inflation-adjusted worth, and the whole
+    point of ``PriceBasis`` is that those two are allowed to do different jobs.
+    """
+
+    def _board(self):
+        levels = ReplacementLevels(
+            points={"RB": 100.0, "WR": 100.0},
+            starters_drafted={"RB": 36, "WR": 36},
+        )
+        pool = [player(f"RB{i}", "RB", 260 - i * 8, adp=i + 1) for i in range(12)]
+        pool += [player(f"WR{i}", "WR", 255 - i * 8, adp=i + 1) for i in range(12)]
+        values = compute_par_values(pool, levels, auction_settings(), NUM_TEAMS)
+        assert all(v.market_cost is None for v in pool)
+        return pool, levels, values
+
+    def _recommend(self, pool, levels, values, sales):
+        return recommend_auction(
+            pool,
+            levels,
+            values,
+            auction_settings(),
+            {},
+            money_remaining=NUM_TEAMS * BUDGET,
+            slots_remaining=NUM_TEAMS * auction_settings().roster_size,
+            my_max_bid=BUDGET,
+            my_budget_remaining=BUDGET,
+            sales=sales,
+            limit=len(pool),
+        )
+
+    @staticmethod
+    def _sales(position: str, ratio: float, count: int) -> list[Sale]:
+        # ``expected`` must clear _PREMIUM_MIN_EXPECTED or the sale is ignored as noise.
+        return [Sale(position=position, price=20.0 * ratio, expected=20.0) for _ in range(count)]
+
+    def test_a_room_derived_price_never_makes_a_player_unaffordable(self):
+        """The circularity guard, at the tier that is most tempting to trust.
+
+        A room-derived price is my own par wearing the room's price level, so within a
+        position it ranks players exactly as my sheet does. Reading it as a constraint
+        would demote a player for being valuable to me -- the original bug. It stays out
+        of ``market_price``, so ``market``, ``surplus`` and ``affordable`` are untouched
+        by it no matter how expensive the room is.
+        """
+        pool, levels, values = self._board()
+        picks = self._recommend(pool, levels, values, self._sales("RB", 3.0, 40))
+        assert picks, "nothing to check"
+        assert all(pick.market is None for pick in picks)
+        assert all(pick.surplus is None for pick in picks)
+        assert all(pick.affordable for pick in picks)
+        assert not any(pick.market_estimated for pick in picks)
+
+    def test_the_room_tier_waits_for_evidence(self):
+        """A premium of 1.0 means "nobody has bid yet", not "the room pays par"."""
+        pool, levels, values = self._board()
+        quiet = self._recommend(pool, levels, values, self._sales("RB", 3.0, 2))
+        silent = self._recommend(pool, levels, values, [])
+        assert {p.name: p.smart_cap for p in quiet} == {p.name: p.smart_cap for p in silent}
+
+    def test_an_expensive_room_reserves_more_for_my_open_starters(self):
+        """What the room tier is actually for.
+
+        Same board, same budget, same inflation -- only the room's observed pricing
+        differs. A room paying triple par for backs makes my two open RB slots genuinely
+        dearer, so less of my $200 is free for anyone else. Before this tier existed the
+        reservation was computed from my own worth and the room's behaviour changed
+        nothing at all.
+        """
+        pool, levels, values = self._board()
+        dear = self._recommend(pool, levels, values, self._sales("RB", 3.0, 40))
+        cheap = self._recommend(pool, levels, values, self._sales("RB", 0.35, 40))
+
+        dear_wr = next(pick for pick in dear if pick.name == "WR0")
+        cheap_wr = next(pick for pick in cheap if pick.name == "WR0")
+        assert dear_wr.smart_cap < cheap_wr.smart_cap
+        # And the reservation is what moved, not the valuation.
+        assert dear_wr.value == pytest.approx(cheap_wr.value)
+
+    def test_a_dear_room_still_returns_a_readable_short_list(self):
+        """A board where nothing is biddable must still be sorted by something useful.
+
+        At a 3x premium the reservation swallows the whole budget, every position's smart
+        cap clamps to 0, and every row reads "bid $0" -- correctly, since the open starters
+        really do cost more than I hold. ``rank_key``'s leading term is then constant for
+        every row, and what saves the list is that the tuple falls through to affordability
+        and score. That fall-through is load-bearing and invisible; this pins it, so a
+        future ``rank_key`` that leads on something non-discriminating without a tie-break
+        cannot quietly turn the short list into an unsorted heap.
+        """
+        pool, levels, values = self._board()
+        dear = self._recommend(pool, levels, values, self._sales("RB", 3.0, 40))
+        assert all(pick.bid_to <= 0 for pick in dear), "fixture no longer poses the question"
+        best = max(dear, key=lambda pick: pick.value)
+        assert dear.index(best) < 3, "the board collapsed into an unsorted heap"
+        scores = [pick.score for pick in dear]
+        assert scores == sorted(scores, reverse=True)
+
+
+class TestPlanBreakEvenTies:
+    """The budget plan's break-even test, at the tie that is its common case.
+
+    The tie needs three things at once, all of which hold constantly in a real draft and
+    none of which happen by accident in a toy fixture:
+
+    1. The candidate's position has no open dedicated slot, so he can only take the flex.
+    2. The plan's own choice for that flex is *him* -- he is the best thing that fits.
+    3. Every other open slot is already funded, so the dollars released by skipping the
+       flex buy nothing extra.
+
+    Then "buy him" and "plan to buy him" are the same basket, the marginal is algebraically
+    zero, and only floating-point noise decides its sign.
+    """
+
+    def _board(self, roster_counts, *, budget=45):
+        # Only running backs carry real value; everything else sits a whisker above
+        # replacement, so those slots cost $1 and condition (3) holds. The room is cheap in
+        # backs, which puts the flex's top rung inside the plan's budget -- condition (2).
+        levels = ReplacementLevels(
+            points={"RB": 140.0, "WR": 140.0, "TE": 90.0, "QB": 230.0, "K": 100.0, "DEF": 100.0},
+            starters_drafted={"RB": 36, "WR": 36, "TE": 12, "QB": 12, "K": 12, "DEF": 12},
+        )
+        pool = [player(f"RB{i}", "RB", 235 - i * 8, adp=i + 1) for i in range(14)]
+        pool += [player(f"WR{i}", "WR", 141 - i * 0.2, adp=i + 15) for i in range(14)]
+        pool += [player(f"TE{i}", "TE", 91 - i * 0.2, adp=i + 40) for i in range(8)]
+        pool += [player(f"QB{i}", "QB", 231 - i * 0.2, adp=i + 50) for i in range(8)]
+        pool += [player(f"K{i}", "K", 101 - i * 0.2, adp=i + 70) for i in range(6)]
+        pool += [player(f"DEF{i}", "DEF", 101 - i * 0.2, adp=i + 80) for i in range(6)]
+        values = compute_par_values(pool, levels, auction_settings(), NUM_TEAMS)
+        pool = [
+            replace(pool[i], market_cost=max(1.0, 20.0 - 2.0 * i) if i < 14 else 1.0)
+            for i in range(len(pool))
+        ]
+        return recommend_auction(
+            pool,
+            levels,
+            values,
+            auction_settings(),
+            roster_counts,
+            money_remaining=int(NUM_TEAMS * BUDGET * 0.35),
+            slots_remaining=60,
+            my_max_bid=min(budget - 1, 60),
+            my_budget_remaining=budget,
+            limit=len(pool),
+        )
+
+    def test_the_best_man_left_at_a_full_position_still_gets_a_bid(self):
+        """Regression: an exact tie in the break-even test read as "worse".
+
+        A strict ``< 0`` returned ``plan_bid = 0`` on noise of order 1e-14, and ``bid_to``
+        inherits that while ``rank_key`` leads on ``bid_to <= 0`` -- so the best player
+        available was not merely underpriced, he sorted beneath every $1 body on the board.
+        Seen on a real draft: a back worth $51, with $34 still to spend, ranked 214th.
+        """
+        picks = self._board({"RB": 2})
+        best_back = next(pick for pick in picks if pick.name == "RB0")
+        assert best_back.value > 20, "fixture no longer poses the question"
+        assert best_back.market is not None and best_back.market <= 25, "flex rung must be cheap"
+        assert best_back.plan_bid, "the plan zeroed the best back left"
+        assert best_back.bid_to > 0
+
+    def test_the_bid_still_answers_to_the_budget(self):
+        """The tie is resolved in favour of bidding, but not of bidding anything.
+
+        Without this the fix could be "always endorse", which would throw away the whole
+        point of ``plan_bid``: the same board with less money must produce a smaller bid.
+        """
+        rich = self._board({"RB": 2}, budget=70)
+        poor = self._board({"RB": 2}, budget=35)
+        rich_back = next(pick for pick in rich if pick.name == "RB0")
+        poor_back = next(pick for pick in poor if pick.name == "RB0")
+        assert poor_back.plan_bid < rich_back.plan_bid
+
+    def test_a_genuinely_worse_buy_is_still_refused(self):
+        """The epsilon is slack for a tie, not a licence to bid on anybody.
+
+        Every slot but the flex is filled, so a second-best back competes with the best one
+        for the same single opening and is strictly the worse use of it. That marginal is
+        negative by dollars, not by ULPs, and must still come back zero.
+        """
+        picks = self._board({"RB": 2, "WR": 2, "TE": 1, "QB": 1, "K": 1, "DEF": 1})
+        best_back = next(pick for pick in picks if pick.name == "RB0")
+        runner_up = next(pick for pick in picks if pick.name == "RB1")
+        assert best_back.plan_bid
+        assert runner_up.plan_bid == 0, "a strictly worse use of the only slot was endorsed"
+
+
 class TestPenaltiesSink:
     def test_a_filled_position_sinks_an_overpriced_player(self):
         """Regression: with a negative score, the depth multiply used to *promote*.

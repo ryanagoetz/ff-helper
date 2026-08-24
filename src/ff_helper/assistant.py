@@ -394,6 +394,13 @@ class Assistant:
                 valuation = self.valuations.valuations.get(pick.player_key)
                 if valuation is None:
                     continue
+                # Par is the fallback basis, and it is the only one whenever no source
+                # priced the player -- the usual case offline, where an auction column in
+                # the projections CSV is the only way a cost arrives at all.
+                # ``auction.PriceBasis``'s room tier leans on this: it reads the premium as
+                # a per-position *ratio* rather than a price level, which is why a pool of
+                # mixed bases (some sales measured against a sheet cost, some against par)
+                # degrades its precision rather than its meaning.
                 expected = valuation.market_cost
                 if expected is None:
                     expected = self.dollars.value_of(pick.player_key)

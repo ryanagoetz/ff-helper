@@ -528,6 +528,17 @@ name — and anything unmatched is reported rather than swallowed.
 - **Auction nominations** aren't tracked. Yahoo's API reports completed sales, not who is
   currently on the block, so the app tells you what everyone is worth rather than reacting
   to the live nomination.
+- **Auction prices, when nobody publishes one.** Yahoo's `average_cost` is live-only, and
+  offline the sole other source is an auction column in your projections CSV. Without
+  either, the app prices the board from what your own room has been paying per dollar of
+  par. That is real evidence about the *position* but not about the *player* — within a
+  position it ranks people exactly as your own sheet does — so it informs budgeting only,
+  and never the "you can't afford him" flag or the mispricing edge, both of which simply
+  go quiet. Relatedly, with no price to compare rungs against, `bid to` degenerates from a
+  break-even into "his worth, capped".
+- **A board that reads "bid $0" everywhere** is possible and is not a bug: it means your
+  open starting slots cost more, at current prices, than you have left. The rows stay
+  ranked by worth, but the cap has nothing useful left to say.
 - **Kickers and defenses** have no stat projections, so their values are interpolated from
   consensus rank. Fine — you shouldn't be thinking hard about them anyway.
 - **Yahoo bonus stats** (long-TD bonuses and similar) aren't scored.

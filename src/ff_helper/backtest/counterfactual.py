@@ -27,9 +27,11 @@ short a player and holding their money, which nudges league-wide money-over-slot
 the inflation the engine sees; the effect is small because interceptions are few, and
 correcting it would require exactly the price model above. And when a policy declines a
 sale I actually won, the player is seated with a rival who could genuinely have outbid me
--- a stand-in for the underbidder, whose identity the record does not preserve -- or, if
-no rival could, left on the recorded buyer's board unpaid. He never comes back to me: the
-policy declined on hard constraints, and returning him would silently breach them.
+-- a stand-in for the underbidder, whose identity the record does not preserve. Failing
+that he goes unpaid to any rival with a seat, and only if every rival is full does the
+recorded sale stand at its recorded price. He never comes back to me *free*, and never
+returns to the pool: the policy declined on hard constraints, and both a $0 roster spot
+and a $1 buy-back through ``_fill_roster`` would silently breach them.
 """
 
 from __future__ import annotations
@@ -151,6 +153,7 @@ def auction_counterfactual(
     policy: str,
     display_limit: int = 8,
     follow_from: int | None = None,
+    stop_after: int | None = None,
 ) -> RosterResult:
     """Replay a recorded auction, letting ``policy`` decide which sales I take.
 
@@ -165,9 +168,28 @@ def auction_counterfactual(
     where the advice is actually load-bearing. Pinning the opening lets a run ask the
     narrower and more useful question: given the hole I had already dug by pick N, was
     there a way out of it?
+
+    ``stop_after`` is its complement, and pins the *end*: past that sale nobody bids for me,
+    and the roster is completed from the leftovers by ``_fill_roster``. It exists because a
+    recorded draft is not uniformly evidence about the advice. Where a real drafter stopped
+    deciding -- switched on autopick, left the room, stopped paying attention -- his
+    recorded buys stop being a decision the policy can be measured against, while still
+    dominating the final lineup. Cutting there and giving *every* policy, ``actual``
+    included, the same mechanical endgame leaves the comparison on the stretch where a
+    human was genuinely choosing, which is the only stretch where "would following the tool
+    have helped?" is a real question.
     """
     if policy not in AUCTION_POLICIES:
         raise ValueError(f"Unknown policy {policy!r}; expected one of {AUCTION_POLICIES}.")
+    if follow_from is not None and stop_after is not None and stop_after < follow_from:
+        # ``stopped`` wins over ``replaying``, so this leaves no window in which the policy
+        # decides anything: every sale is either replayed or declined, and all four rows of
+        # the table come back identical. A comparison that measures nothing must not print
+        # as though it measured something -- CLAUDE.md gates engine changes on this tool.
+        raise ValueError(
+            f"stop_after={stop_after} is before follow_from={follow_from}, which leaves the "
+            "policy no picks to decide; every result would be identical."
+        )
     if not record.is_auction:
         raise ValueError("auction_counterfactual is for auctions; use counterfactual().")
     my_team = record.my_team
@@ -179,6 +201,10 @@ def auction_counterfactual(
     settings = record.league.settings
     assert settings is not None  # enforced by DraftRecord construction
 
+    # Players a policy declined that no team could absorb. They are off the board entirely,
+    # and must stay out of my endgame fill -- otherwise the policy declines on hard
+    # constraints and then buys the same player a few dollars later.
+    declined: set[str] = set()
     for pick in sorted(record.picks):
         # `cost or 0` would be wrong here: Yahoo lists kept players inside draftresults
         # with no sale price at all, so a legitimate row arrives with cost=None. Read as
@@ -191,11 +217,21 @@ def auction_counterfactual(
 
         # The recorded sale stands unless the policy actively changes it.
         buyer, cost = pick.team_key, pick.cost
-        replaying = policy == "actual" or (follow_from is not None and pick.pick < follow_from)
+        # Past ``stop_after`` nobody bids for me -- not even ``actual``, whose recorded buys
+        # from here on are exactly the evidence being excluded. They fall through to the
+        # decline path below, which seats them with a rival rather than with me.
+        stopped = stop_after is not None and pick.pick > stop_after
+        replaying = not stopped and (
+            policy == "actual" or (follow_from is not None and pick.pick < follow_from)
+        )
         if not replaying and priced:
             # An unpriced sale is not biddable: there is no price to beat, and it is
             # nearly always a keeper folded into draftresults. Leave it where it lies.
-            bid = _auction_choice(assistant, policy, pick, price, was_mine, display_limit)
+            bid = (
+                None
+                if stopped
+                else _auction_choice(assistant, policy, pick, price, was_mine, display_limit)
+            )
             if bid is not None:
                 buyer, cost = my_team.team_key, bid
             elif was_mine:
@@ -203,12 +239,33 @@ def auction_counterfactual(
                 # underbidder was, so a rival who can actually seat him stands in -- what
                 # matters is that he leaves the pool and the money stays accounted.
                 #
-                # If no rival can, he is seated *unpaid* rather than charged to anyone.
-                # Handing him back to me would reverse the decline at the recorded price
-                # and breach the two hard constraints the policy declined on: forcing that
-                # path on the fixture put 16 players and $257 on a 15-slot, $200 roster.
+                # If no rival can afford him, he goes to one who at least has a slot, and
+                # goes *unpaid* rather than charged to anyone -- the money is the part that
+                # cannot be invented, the seat is not. What he must never do is stay with me:
+                # in this branch ``pick.team_key`` IS my team, so falling back to it seated
+                # my own declined buy on my own roster at ``cost=None``, which
+                # ``DraftState.spent`` reads as $0. That is a free player, and it reverses
+                # the decline the policy just made on hard constraints. It bit hardest under
+                # ``stop_after``, whose whole job is to decline a run of late sales at the
+                # exact point in a draft where every rival is full and ``_deepest_pocket``
+                # returns None.
                 stand_in = _deepest_pocket(state, my_team.team_key, price)
-                buyer, cost = (stand_in, price) if stand_in else (pick.team_key, None)
+                if stand_in is not None:
+                    buyer, cost = stand_in, price
+                else:
+                    seat = _any_open_rival(state, my_team.team_key)
+                    if seat is not None:
+                        buyer, cost = seat, None
+                    else:
+                        # Every rival is full, so nobody can take him and the sale simply
+                        # does not happen -- which is what an auction does when no one bids.
+                        # He must not drift back to me by either of the two routes that were
+                        # here before: seating him with the recorded buyer is seating him
+                        # with *me* (this branch is ``was_mine``), and leaving the board
+                        # untouched puts him in the pool for ``_fill_roster`` to buy at $1.
+                        # ``declined`` closes the second; skipping ``apply_sync`` the first.
+                        declined.add(pick.player_key)
+                        continue
 
         state.apply_sync(
             [
@@ -227,11 +284,17 @@ def auction_counterfactual(
     # would otherwise "win" by fielding seven players and a pile of unspent cash, and the
     # lineup metric would quietly score its empty slots as zero. The real endgame is a run
     # of dollar players out of the undrafted pool, so that is what this buys.
-    if policy != "actual":
+    # ``actual`` normally needs no filling -- it already has the roster it had. Under
+    # ``stop_after`` it does, and on the same terms as everyone else: that is the whole
+    # point of cutting there, since a comparison where one arm keeps its real endgame and
+    # the others get a greedy one measures the cut, not the advice.
+    if policy != "actual" or stop_after is not None:
         # Numbered past the record's last sale: these are endgame buys, and borrowing a
         # low free slot would print them as if they had happened in the first round.
         last = max((pick.pick for pick in record.picks), default=0)
-        _fill_roster(assistant, state, settings, my_team.team_key, start=last + 1)
+        _fill_roster(
+            assistant, state, settings, my_team.team_key, start=last + 1, skip=declined
+        )
 
     players: list[tuple[int, str, str]] = []
     roster: list[PlayerValuation] = []
@@ -320,7 +383,13 @@ def _auction_choice(
 
 
 def _fill_roster(
-    assistant: Assistant, state, settings: LeagueSettings, my_team_key: str, *, start: int
+    assistant: Assistant,
+    state,
+    settings: LeagueSettings,
+    my_team_key: str,
+    *,
+    start: int,
+    skip: set[str] | None = None,
 ) -> int:
     """Buy dollar players until the roster is full.
 
@@ -355,6 +424,8 @@ def _fill_roster(
         # same DraftState, so re-filtering here would be dead work and a second opinion
         # about what "available" means.
         available = assistant.available()
+        if skip:
+            available = [v for v in available if v.player_key not in skip]
         if not available:
             break
         # Tiers, tried in order. An empty tier falls through to the next rather than
@@ -398,6 +469,25 @@ def _fill_roster(
             timestamp=0.0,
         )
     return spent
+
+
+def _any_open_rival(state, my_team_key: str) -> str | None:
+    """A rival with a roster spot left, or None if every other team is full.
+
+    The last resort when I decline a sale I actually won and no rival can *afford* him.
+    Seating him unpaid on a team that at least has room is strictly better than the two
+    alternatives: charging a team that cannot pay corrupts league money for every later
+    inflation reading, and leaving him with me hands the policy a free player it just
+    declined. Money is the part that cannot be invented here; a seat is not.
+    """
+    rivals = [
+        team
+        for team in state.teams
+        if team.team_key != my_team_key and state.slots_remaining(team.team_key) > 0
+    ]
+    if not rivals:
+        return None
+    return max(rivals, key=lambda team: state.slots_remaining(team.team_key)).team_key
 
 
 def _deepest_pocket(state, my_team_key: str, price: int) -> str | None:

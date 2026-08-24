@@ -57,6 +57,7 @@ def run(
     timing: bool,
     predictor: str,
     follow_from: int | None = None,
+    stop_after: int | None = None,
     display_limit: int = 8,
 ) -> None:
     my_team = record.my_team
@@ -95,6 +96,11 @@ def run(
         print("\nSurvival calibration is snake-only (an auction has no 'next pick').")
         if follow_from is not None:
             print(f"  (history replayed verbatim through pick {follow_from}, policy after)")
+        if stop_after is not None:
+            print(
+                f"  (compared through pick {stop_after}; every policy including 'actual' "
+                "fills the rest from the leftovers)"
+            )
         print("\nCounterfactual rosters (my buys made by each policy):")
         print(f"  (short list = {display_limit} rows, matching the app)")
         print(f"  {'policy':<10} {'lineup pts':>10} {'roster VOR':>11} {'spent':>7} {'slots':>6}")
@@ -105,6 +111,7 @@ def run(
                 policy=policy,
                 display_limit=display_limit,
                 follow_from=follow_from,
+                stop_after=stop_after,
             )
             print(
                 f"  {policy:<10} {result.lineup_points:10.1f} "
@@ -112,6 +119,9 @@ def run(
             )
         print("  (prices held at what they actually were -- see counterfactual.py)")
         return
+
+    if stop_after is not None:
+        print("\n--stop-after is auction-only; ignoring it for this snake record.")
 
     # -- calibration ---------------------------------------------------------------
     report = calibration.survival_calibration(
@@ -170,6 +180,16 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--stop-after",
+        type=int,
+        help=(
+            "Auction only: stop bidding for me after this pick and fill the rest of the "
+            "roster from the leftovers -- for 'actual' too. Use it to cut a record where "
+            "the real drafter stopped deciding (autopick, walked away), whose buys past "
+            "that point are not a decision any policy can be measured against."
+        ),
+    )
+    parser.add_argument(
         "--predictor",
         choices=sorted(PREDICTORS),
         default="analytic",
@@ -210,6 +230,7 @@ def main() -> int:
         timing=args.time,
         predictor=args.predictor,
         follow_from=args.follow_from,
+        stop_after=args.stop_after,
         display_limit=args.display_limit,
     )
     return 0
