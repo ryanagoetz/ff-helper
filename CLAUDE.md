@@ -29,7 +29,7 @@ Supporting scripts (all `uv run python scripts/...`):
 - `news.py [--serve] [--file x.txt] [--list]` — capture article text; `--serve --bridge` accepts the userscript
 - `make_reader.py --news` — emit `news_bridge.ready.js` with the token filled in
 - `replay.py [--league|--from-file] [--dump path]` — replay a completed draft through the engine
-- `backtest.py --file record.json [--time] [--predictor mc] [--follow-from N] [--stop-after N]` — hits, calibration (Brier), counterfactual roster. Auctions replay at recorded prices; `--follow-from` hands over to the policy mid-draft, `--stop-after` cuts the comparison at pick N and fills every policy's remaining slots the same way (including `actual`'s), for records where the human stopped deciding partway — autopick, walked away — and whose later buys are not a decision any policy can be graded against
+- `backtest.py --file record.json [--time] [--predictor mc] [--follow-from N] [--stop-after N] [--nominations]` — hits, calibration (Brier), counterfactual roster. `--nominations` grades the nomination model's predictions against the record (calibration only — see below). Auctions replay at recorded prices; `--follow-from` hands over to the policy mid-draft, `--stop-after` cuts the comparison at pick N and fills every policy's remaining slots the same way (including `actual`'s), for records where the human stopped deciding partway — autopick, walked away — and whose later buys are not a decision any policy can be graded against
 - `make_reader.py` — emit `yahoo_bridge.ready.js` with the bridge token filled in
 - `evaluate_keepers.py`, `mock_config.py` — keeper value report; league YAML from a mock room
 
@@ -53,9 +53,13 @@ engine/     scoring -> replacement -> {vona.py (snake) | auction.py (auction) |
                                        weekly.py (in-season)}
             lineup.py sits *beside* replacement, not above it: all three engines
             import it, and none of them import each other
+            nomination.py is its own layer *above* auction.py -- who to put up,
+            which is a question about other teams' money, not about my board
             winprob.py is its own layer under weekly.py -- score distributions
             and matchup odds, with no idea what a lineup slot is
 draft/      state.py (the authoritative board), sync.py (poller), bridge.py, keepers.py
+            state.board_key fingerprints the board; Assistant memoizes one
+            whole-pool auction pass against it, shared by both auction panels
 season/     cache.py (WeekSnapshot), valuation.py (WeeklyValuation) -- the in-season
             parallel to rankings/, kept separate on purpose
             news/ flags.py (the closed vocabulary), store.py (append-only JSONL),
@@ -74,6 +78,55 @@ offline.py  a parallel data layer that substitutes for yahoo/ entirely
 **What a player is worth and what he costs are separate, and so is "we don't know what he costs".** `auction.PriceBasis` holds three tiers of price — a source's published cost, `_estimate_markets`' interpolation between published costs, and his par scaled by what this room has actually been paying per dollar of par at his position — plus my own inflation-adjusted worth as the floor. Two accessors read them at two different evidence bars, because substituting my worth for an unknown price is circular in a way that only bites some consumers: `market_price` (published/interpolated only) backs claims about an *individual* — affordability, surplus, the plan-marginal score — while `estimate` takes all three and backs *budgeting*, where a number is required and refusing to guess just means guessing $1. The room tier fires whenever no *still-available* player carries a published cost — usual offline (Yahoo's `average_cost` is live-only, and an auction column in the projections CSV is the only other way one arrives), but a live league reaches it too once the last priced player is sold. It stays out of `market_price` because within a position it ranks players exactly as my own sheet does, and letting it declare a player unaffordable measurably lost points.
 
 **A tie in the budget plan is the common case, not a coincidence.** `auction.py`'s break-even test compares two DP totals that share most of their terms, and whenever the plan's own choice for the slot a candidate would fill *is* that candidate, buying him and planning to buy him are the same basket — so the marginal is algebraically zero and only float noise picks its sign. Both comparisons in `plan_bid_for` therefore carry `_PLAN_EPSILON`. A strict `< 0` there returned `plan_bid = 0` for the best remaining player at any position whose dedicated slots were full, and since `rank_key` leads on `bid_to <= 0` he did not just look cheap, he fell off the short list: measured on the 2026 record, a back worth $51 with $34 still to spend ranked 214th.
+
+**The nomination list optimizes someone else's money, and cannot be backtested.**
+`engine/nomination.py` is the only module here whose objective is not my own value, and it
+sits *above* `auction.py` (the `winprob.py`-under-`weekly.py` relationship, not the
+`vona.py`-beside-`auction.py` one) reading `AuctionRecommendation` rather than re-deriving
+it. A nomination is a *timing* decision — everyone gets nominated eventually, you choose
+against whose money — so the score is an expectation over two branches, both in dollars:
+nobody bids and you own him, or someone bids and rival money leaves the room. Three
+corrections were each necessary and each looked fine before measurement. `min_bid_marginal`
+is *not* reliably positive (296 of 458 sub-$3 players on the real board are negative), so
+"wasted slot" needs the `_slot_floor` baseline, which may itself be negative. Charging a player's *value* for nominating someone you
+want is wrong by an order of magnitude — losing him costs the cascade to the next man — and
+charging it collapsed the list onto $4 quarterbacks. And the separation from the buy list is
+**weaker than it looks and bounded by the price source**: on an unpriced board the room tier
+is your own par reordered by a positional premium, so the two lists rank one signal --
+measured, top-20-by-price and top-20-by-value agree 14.9/20 and the panel overlaps the buy
+list 3.9/6. Suppression is positional and continuous (`_plan_pressure`), never a per-player
+cut, because competing backs are substitutes for one slot and a cut on adjacent floats gave
+two identical receivers opposite advice. What the panel independently knows is *who can
+bid*.
+The backtest cannot grade any of this — no nominator in the record, prices frozen by design
+— so `backtest/nominations.py` grades predictions against null baselines and says so in its
+own output. The `auction.py` change that supports it (`budget_price`, `price_basis`,
+`min_bid_marginal`) is inert: the gate it passed was byte-identity of the existing table.
+
+**One engine pass per board state, keyed by a fingerprint of the board itself.** Both
+auction panels need the *same* board priced and the page asks for both every 2 seconds, so
+`Assistant._priced_board` memoizes a whole-pool `recommend_auction` against
+`DraftState.board_key` — 30.9 ms per poll when a sale has landed, 2.6 ms when it has not,
+on a 524-player board. `limit` only slices at the end of the engine, so one list serves
+every caller.
+
+The key is **derived, not maintained**, and the counter it replaced is worth remembering
+because it failed in both directions at once. It over-fired: `apply_sync` bumped whether or
+not a pick was new and called `drop_player` (another bump) per pick, while the poller
+re-sends Yahoo's whole result list every 2 s — so a poll reporting *nothing* moved it by 101
+on a 100-sale board and the cache never survived a poll, which is the only configuration
+that mattered. And it under-fired: `roster_size`, `teams` and the `draft_status` setter feed
+engine inputs from outside the discipline, and the test guarding the discipline was circular
+— it built its expected set *from* the methods that already called `_touch`, so a new
+mutator that forgot was absent from both sides and the assertion passed. A fingerprint has
+neither hole and costs 0.044 ms against a 30 ms pass. `tests/test_draft.py::TestBoardKey`
+pins both directions, including that a no-op poll does not move it.
+
+Computing is guarded by a separate `_engine_lock`, never `Assistant.lock` — holding the
+board lock across the engine is exactly what this repo forbids, since the poller would block
+behind it. Callers that need more than the board (the nomination list needs rival budgets)
+pass an `alongside` callable so their extra reads happen inside the *same* lock hold that
+fingerprinted it; reading them separately let the two straddle a sale.
 
 **The board is the source of truth; the poller is just one of its writers.** `DraftState` accepts picks from the Yahoo poller, manual entry, and the draft-room bridge. Conflicts resolve toward Yahoo, but a superseded manual entry is reported, never silently overwritten.
 

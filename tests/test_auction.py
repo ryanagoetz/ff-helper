@@ -908,6 +908,110 @@ class TestRoomPremiumIntegration:
         assert not hot[0].market_estimated
 
 
+class TestNominationFieldsAreInert:
+    """The three fields ``engine/nomination.py`` reads, and nothing on the buy side does.
+
+    They exist so the nomination model can quote the same numbers as the board rather than
+    forming a second opinion about it. Nothing here may read them -- not ``rank_key``, not
+    ``bid_to``, not ``_explain`` -- so what is worth pinning is that they stay *consistent*
+    with the fields that were already there, rather than merely present.
+    """
+
+    def _picks(self, assistant):
+        return assistant.auction_recommendations(limit=40)
+
+    def test_min_bid_marginal_exists_exactly_when_a_plan_does(self, assistant):
+        for pick in self._picks(assistant):
+            assert (pick.min_bid_marginal is None) == (pick.plan_bid is None)
+
+    def test_price_basis_agrees_with_market_estimated(self, assistant):
+        for pick in self._picks(assistant):
+            assert (pick.price_basis == "interpolated") == pick.market_estimated
+
+    def test_an_own_basis_means_nothing_outside_me_priced_him(self, assistant):
+        """The distinction ``market_estimated`` could not draw, and the reason ``tier`` exists."""
+        picks = self._picks(assistant)
+        assert any(pick.price_basis == "own" for pick in picks), "fixture no longer priceless"
+        for pick in picks:
+            if pick.price_basis == "own":
+                assert pick.market is None
+                assert pick.surplus is None
+
+    def test_budget_price_is_a_real_price(self, assistant):
+        for pick in self._picks(assistant):
+            assert pick.budget_price is not None
+            assert pick.budget_price >= MIN_BID
+
+    def test_a_published_price_is_what_market_reports(self, assistant):
+        """``budget_price`` and ``market`` must agree wherever both are allowed to speak."""
+        for pick in self._picks(assistant):
+            if pick.price_basis in {"published", "interpolated"}:
+                assert pick.market == pytest.approx(pick.budget_price)
+
+
+class TestPricedBoardCache:
+    """One engine pass per board state, shared by the buy list and the nomination list.
+
+    The cache is keyed on ``DraftState.revision``; ``tests/test_draft.py`` guards that every
+    mutator bumps it. What is worth pinning here is the other half: that a bump is actually
+    *honoured*, so a sale changes the prices rather than being masked by a stale entry.
+    """
+
+    def test_a_second_call_on_an_unchanged_board_reuses_the_run(self, assistant):
+        first = assistant.auction_recommendations(limit=8)
+        second = assistant.auction_recommendations(limit=8)
+        # Identity, not equality: a fresh run would build new objects.
+        assert all(a is b for a, b in zip(first, second, strict=True))
+
+    def test_the_nomination_list_reads_the_same_priced_board(self, assistant):
+        buys = assistant.auction_recommendations(limit=8)
+        named = assistant.nomination_list(limit=6)
+        by_key = {pick.valuation.player_key: pick for pick in buys}
+        shared = [c for c in named if c.player_key in by_key]
+        assert shared, "fixture no longer overlaps; pick a board where it does"
+        for candidate in shared:
+            # The same object, so the two panels cannot quote different numbers for one
+            # player -- which they could when each ran its own engine pass.
+            assert candidate.recommendation is by_key[candidate.player_key]
+
+    def test_a_sale_invalidates_it(self, assistant, my_key):
+        before = assistant.auction_recommendations(limit=8)
+        target = before[0]
+        with assistant.lock:
+            assistant.state.record_manual(
+                target.valuation.player_key, cost=40, team_key=my_key
+            )
+        after = assistant.auction_recommendations(limit=8)
+        assert after[0] is not target
+        assert target.valuation.player_key not in {p.valuation.player_key for p in after}
+
+    def test_limit_only_slices(self, assistant):
+        """``limit`` must not reach the engine, or the cached list would be truncated."""
+        wide = assistant.auction_recommendations(limit=50)
+        narrow = assistant.auction_recommendations(limit=3)
+        assert len(narrow) == 3
+        assert all(a is b for a, b in zip(wide[:3], narrow, strict=True))
+
+    def test_concurrent_callers_get_one_run(self, assistant):
+        """The page fires /api/recommend and /api/nominate at the same instant."""
+        import threading
+
+        results = []
+        barrier = threading.Barrier(2)
+
+        def call():
+            barrier.wait()
+            results.append(assistant.auction_recommendations(limit=5))
+
+        threads = [threading.Thread(target=call) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert len(results) == 2
+        assert all(a is b for a, b in zip(results[0], results[1], strict=True))
+
+
 class TestAuctionAPI:
     def test_state_reports_auction_mode_and_budgets(self, client):
         payload = client.get("/api/state").json()
@@ -929,6 +1033,34 @@ class TestAuctionAPI:
         # VONA and survival are meaningless in an auction and must not be served.
         assert "vona" not in first
         assert "survival" not in first
+
+    def test_nominate_returns_a_motive_and_a_named_bidder_set(self, client):
+        payload = client.get("/api/nominate?limit=5").json()
+        assert payload["draft_type"] == "auction"
+        assert "error" not in payload, payload.get("error")
+        rows = payload["nominations"]
+        assert rows and len(rows) <= 5
+        for row in rows:
+            assert row["motive"] in {"drain", "bargain"}
+            assert isinstance(row["live_bidders"], list)
+            assert all(isinstance(name, str) for name in row["live_bidders"])
+            # The buy-side sentence and the nomination sentence are separate questions.
+            assert row["reason"] != row["nomination_reason"]
+            assert row["price_basis"] in {"published", "interpolated", "room", "own"}
+
+    def test_nominate_is_ordered_by_its_own_score_not_the_buy_score(self, client):
+        rows = client.get("/api/nominate?limit=8").json()["nominations"]
+        scores = [row["nomination_score"] for row in rows]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_a_snake_league_serves_no_nominations(self):
+        from tests.test_web import build_league as snake_league
+
+        league = snake_league()
+        state = DraftState(league=league, teams=auction_teams())
+        assistant = Assistant.build(league, state, build_snapshot(), lock=threading.Lock())
+        payload = TestClient(create_app(assistant, sync=None)).get("/api/nominate").json()
+        assert payload == {"draft_type": "snake", "nominations": []}
 
     def test_auction_pick_without_a_price_is_rejected(self, client):
         target = client.get("/api/recommend?limit=1").json()["recommendations"][0]

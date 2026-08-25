@@ -71,6 +71,14 @@
   .TE { color: #fbbf24; } .K { color: #a78bfa; } .DEF { color: #94a3b8; }
   .why { color: var(--dim); font-size: 13px; }
   .flag { color: var(--warn); font-size: 11px; }
+  /* The motive badge is not decoration: a drain and a bargain call for opposite behaviour
+     once bidding starts, so the row has to say which one it is. */
+  .motive { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--line); text-transform: uppercase; letter-spacing: .05em; }
+  .motive.drain { color: var(--warn); }
+  .motive.bargain { color: var(--accent); }
+  .neg { color: var(--warn); }
+  #nomBody tr { cursor: pointer; }
+  #nomBody tr:hover { background: var(--panel-2); }
 
   /* Controls */
   input[type=search] { width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font-size: 14px; }
@@ -145,6 +153,20 @@
         <tbody id="altBody"></tbody>
       </table>
     </div>
+
+    <!-- The opposite question to the two panels above. Those answer "who should I bid
+         on"; this answers "whose name should I say", which is mostly about other
+         people's money. Left column because it is a decision, not data entry -- and
+         separate from the "Nominated player" box above, which records a sale. -->
+    <div class="panel" id="nominatePanel" style="display:none">
+      <div class="label" style="margin-bottom:8px">Put one of these up</div>
+      <div class="muted" id="nominateLead" style="margin-bottom:8px"></div>
+      <table>
+        <thead id="nomHead"></thead>
+        <tbody id="nomBody"></tbody>
+      </table>
+      <div class="muted" id="nominateCaveat" style="margin-top:8px; display:none"></div>
+    </div>
   </div>
 
   <div>
@@ -180,6 +202,16 @@
 const $ = id => document.getElementById(id);
 const fmt = n => (n === null || n === undefined) ? "—" : n;
 const money = n => (n === null || n === undefined) ? "—" : `$${n}`;
+// Team names are opponent-authored free text and land in innerHTML. Escape both the text
+// and the attribute contexts from one place rather than patching quotes at each site.
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c]);
+// Signed money keeps the minus outside the dollar sign: "-$6.1", never "$-6.1".
+// Object.is catches -0, which JSON carries and which `-0 < 0` reports as false — a row
+// worth -0.04 rounds to -0.0 and would otherwise advertise "+$0" for a real loss.
+const isNeg = n => n < 0 || Object.is(n, -0);
+const signedMoney = n => (n === null || n === undefined) ? "—"
+  : (isNeg(n) ? `-$${Math.abs(n)}` : (n === 0 ? `$0` : `+$${n}`));
 let isAuction = false;
 let lastMaxBid = 0;
 
@@ -391,13 +423,102 @@ function renderRecommendations(data) {
     </tr>`).join("");
 }
 
+const NOMINATION_COLUMNS = `<tr>
+  <th>Player</th><th>Pos</th><th>Why</th><th class="num">Room spends</th>
+  <th>Aimed at</th><th class="num">If nobody bids</th><th class="num">Worth to you</th></tr>`;
+
+// Real team names are long and there can be eleven of them. Two plus a count is what fits
+// and what a human can actually read at a glance; the full set is in the row's tooltip.
+function bidderList(names, keep = 2) {
+  if (!names || !names.length) return "nobody";
+  const shown = names.slice(0, keep).map(esc).join(", ");
+  return names.length <= keep ? shown : shown + ` +${names.length - keep}`;
+}
+
+function renderNominations(data) {
+  const panel = $("nominatePanel");
+  const rows = (data && data.nominations) || [];
+  // A failed request has no draft_type, so fall back to what the rest of the page already
+  // knows rather than asserting "auction" -- the fallback object used to hardcode it, which
+  // popped this auction-only panel open in a snake draft on any network blip.
+  const auction = data && (data.draft_type ? data.draft_type === "auction" : isAuction);
+  if (!auction) { panel.style.display = "none"; return; }
+  panel.style.display = "";
+
+  if (!rows.length) {
+    $("nominateLead").textContent = data.error
+      ? "Nomination model unavailable — the board above is unaffected."
+      : "Nothing worth nominating yet.";
+    $("nomHead").innerHTML = ""; $("nomBody").innerHTML = "";
+    $("nominateCaveat").style.display = "none";
+    return;
+  }
+
+  const top = rows[0];
+  // The "nobody can reach him" claim is gated on the bidder set actually being empty, not
+  // on the motive label. Keyed on motive alone it printed that sentence directly above a
+  // column naming the teams that could bid — 61 of 417 rows on the real record.
+  const nobody = !top.live_bidders || !top.live_bidders.length;
+  $("nominateLead").innerHTML = nobody
+    ? `Put up <b>${esc(top.name)}</b> — nobody who needs a ${esc(top.position)} can reach $${top.expected_price}.`
+    : `Put up <b>${esc(top.name)}</b> — ${bidderList(top.live_bidders, 2)} can reach $${top.expected_price} and still need a ${esc(top.position)}.`;
+
+  $("nomHead").innerHTML = NOMINATION_COLUMNS;
+  $("nomBody").innerHTML = rows.map(r => `
+    <tr data-name="${esc(r.name)}"${r.nomination_score > 0 ? "" : ' style="opacity:.5"'}
+        title="${esc(r.nomination_reason)}">
+      <td>${esc(r.name)}${r.status ? ` <span class="flag">${esc(r.status)}</span>` : ""}</td>
+      <td>${posTag(r.position)}</td>
+      <td><span class="motive ${esc(r.motive)}">${esc(r.motive)}</span></td>
+      <td class="num">$${r.expected_price}</td>
+      <td class="why" title="${esc(r.live_bidders.join(', ') || 'nobody')}">${bidderList(r.live_bidders)}</td>
+      <td class="num${isNeg(r.stuck_value) ? " neg" : ""}">${signedMoney(r.stuck_value)}</td>
+      <td class="num">$${r.value}</td>
+    </tr>`).join("");
+
+  // Click a row to load him into the sale box above: see who to nominate, click, say his
+  // name, type the price. The existing lookup path runs untouched.
+  $("nomBody").querySelectorAll("tr").forEach(tr => {
+    tr.addEventListener("click", () => {
+      const box = $("nomBox");
+      box.value = tr.dataset.name;
+      box.dispatchEvent(new Event("input"));
+      box.focus();
+    });
+  });
+
+  // Two different priceless states, and they do not warrant the same sentence. The room
+  // tier has a real money *level* under it — what this room has actually paid per dollar of
+  // par. "own" has nothing outside your own sheet at all, and auction.py calls a claim
+  // about the room built on it circular. Showing the room sentence for "own" told the
+  // drafter his own valuation was what the room had been paying, which on an untouched
+  // board is every row.
+  const own = rows.some(r => r.price_basis === "own");
+  const room = rows.some(r => r.price_basis === "room");
+  const caveat = $("nominateCaveat");
+  caveat.style.display = (own || room) ? "" : "none";
+  caveat.textContent = own
+    ? "No published prices, and not enough sales yet for a room rate — so “room spends” is " +
+      "your own valuation, not evidence about what anyone will pay. Read the bidder set, not the rank."
+    : "No published prices in this league, so “room spends” is what your room has been " +
+      "paying per dollar of par at that position — a claim about the position, not about him.";
+}
+
 async function refresh() {
   try {
-    const [state, recs] = await Promise.all([
-      getJSON("/api/state"), getJSON("/api/recommend?limit=8")
+    // The nomination call carries its own catch and never rejects. Promise.all is
+    // fail-fast, so without it a single 500 from /api/nominate skipped renderState and
+    // renderRecommendations entirely and painted "app unreachable" over a healthy board --
+    // the precise opposite of the isolation that endpoint exists to provide.
+    const [state, recs, noms] = await Promise.all([
+      getJSON("/api/state"),
+      getJSON("/api/recommend?limit=8"),
+      getJSON("/api/nominate?limit=6").catch(() => ({nominations: [], error: true}))
     ]);
     renderState(state);
     renderRecommendations(recs);
+    // Likewise for a render fault: it must not overwrite a healthy sync clock.
+    try { renderNominations(noms); } catch (err) { console.error("nomination panel", err); }
   } catch (err) {
     $("syncDot").className = "dot down";
     $("syncText").textContent = "app unreachable";

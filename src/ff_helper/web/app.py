@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import logging
 import threading
 import time
 import webbrowser
@@ -22,7 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from ff_helper import offline
-from ff_helper.assistant import Assistant
+from ff_helper.assistant import Assistant, _NominationModelError
 from ff_helper.config import Settings, load_settings
 from ff_helper.config import bridge_token as config_bridge_token
 from ff_helper.draft import bridge, keepers
@@ -41,6 +42,8 @@ YAHOO_ORIGIN = "https://football.fantasysports.yahoo.com"
 # Hostnames that are this app itself. Compared as parsed hostnames, not string
 # prefixes -- "localhost.evil.example" starts with "localhost".
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+log = logging.getLogger(__name__)
 
 
 def _serialize(pick, is_auction: bool) -> dict:
@@ -83,6 +86,38 @@ def _serialize(pick, is_auction: bool) -> dict:
             }
         )
     return common
+
+
+def _serialize_nomination(candidate) -> dict:
+    """The buy-side numbers through the shared serializer, nomination numbers on top.
+
+    ``reason`` stays the buy-side sentence and the nomination's own explanation lands
+    beside it as ``nomination_reason``. Two different questions get two different
+    sentences, and a row shows both: what he is worth to you, and why saying his name is
+    worth something separately from that.
+    """
+    payload = _serialize(candidate.recommendation, True)
+    payload.update(
+        {
+            "motive": candidate.motive,
+            "nomination_score": round(candidate.score, 1),
+            # Already whole dollars from the engine, and rounded there by ``_dollars`` --
+            # the same number the live-bidder gate tested. A bare ``round()`` here is
+            # banker's rounding (the hazard ``auction._dollars`` exists to name) and made
+            # the panel print a threshold the model had not used.
+            "expected_price": int(candidate.expected_price),
+            "drain": round(candidate.drain, 1),
+            "drain_gain": round(candidate.drain_gain, 1),
+            "aim": round(candidate.aim, 2),
+            "live_bidders": list(candidate.live_bidders),
+            "stuck_probability": round(candidate.stuck_probability, 2),
+            "stuck_value": round(candidate.stuck_value, 1),
+            "capture_at_risk": round(candidate.capture_at_risk, 1),
+            "price_basis": candidate.recommendation.price_basis,
+            "nomination_reason": candidate.reason,
+        }
+    )
+    return payload
 
 
 class PastedBoard(BaseModel):
@@ -217,6 +252,43 @@ def create_app(
             payload["inflation"] = round(assistant.current_inflation(), 3)
             payload["max_bid"] = assistant.state.my_max_bid()
         return payload
+
+    @app.get("/api/nominate")
+    def nominate(limit: int = 6) -> dict:
+        """Who to PUT UP — the opposite question to /api/recommend.
+
+        /api/recommend answers "who should I bid on". This answers "whose name should I
+        say", which is mostly a question about *other people's* money.
+
+        Wrapped, on the pattern snake_recommendations already uses around the market
+        simulator: advice must survive a model bug. This is the one endpoint whose failure
+        must never be able to reach the board you actually bid from, so a broken nomination
+        model empties its own panel and leaves everything else untouched.
+        """
+        if not assistant.is_auction:
+            return {"draft_type": "snake", "nominations": []}
+        try:
+            # Serialization is inside the guard too. Left outside, a bad float reaching
+            # Starlette's allow_nan=False encoder became a 500 rather than this envelope --
+            # and a 500 here used to take the whole board down with it.
+            #
+            # What the guard must NOT swallow is the shared engine. ``nomination_list`` runs
+            # ``_priced_board``, the same ``recommend_auction`` pass ``/api/recommend``
+            # serves, so a widened catch reported a buy-side bug as "nomination model
+            # failed" and told the user "the board above is unaffected" while
+            # ``/api/recommend`` was 500ing on the identical exception. The boundary belongs
+            # at the nomination model itself, which is what ``nomination_only`` isolates.
+            rows = [
+                _serialize_nomination(candidate)
+                for candidate in assistant.nomination_list(limit=limit, nomination_only=True)
+            ]
+        except _NominationModelError:
+            # Narrow on purpose: only the nomination model's own failure is absorbed, and it
+            # has already logged. A fault in the shared engine propagates and 500s here just
+            # as it does on /api/recommend, because the panel's "the board above is
+            # unaffected" would be a lie in that case.
+            return {"draft_type": "auction", "nominations": [], "error": True}
+        return {"draft_type": "auction", "nominations": rows}
 
     @app.get("/api/search")
     def search(q: str, limit: int = 10) -> dict:

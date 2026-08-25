@@ -526,8 +526,28 @@ name — and anything unmatched is reported rather than swallowed.
 - **Auction budgets** default to $200 when Yahoo doesn't publish one — override with
   `FF_AUCTION_BUDGET` if your league differs.
 - **Auction nominations** aren't tracked. Yahoo's API reports completed sales, not who is
-  currently on the block, so the app tells you what everyone is worth rather than reacting
-  to the live nomination.
+  currently on the block, so the app can't react to the live nomination — it tells you what
+  the named player is worth instead. It does *propose* one, though: "Put one of these up"
+  answers the opposite question, whose name to say next, mostly out of what other teams can
+  still afford and still need.
+- **The nomination panel's ordering is close to the buy list without published prices**,
+  and that is structural rather than a bug to tune out. With no auction column the only
+  price signal is your own par scaled by what the room pays at that position, so "what the
+  room will pay" and "what he is worth to you" are one signal: measured on the 2026 record,
+  the top 20 by each agree on 14.9 of 20, and the top-6 nominations overlap the top-8 buys
+  by 3.9 of 6. What the panel independently knows is the **Aimed at** column — which rivals
+  can actually bid, from their budgets and roster holes — and the positional suppression,
+  which only bites once your own needs narrow. Get a published price into the pool and the
+  ordering becomes informative; until then, read the bidder set, not the rank.
+- **The nomination model can't be backtested for outcome**, only calibrated for prediction.
+  A draft record carries the buyer, the price and the sale order — but no nominator, so
+  there is no recorded decision to grade a policy against; and the counterfactual holds
+  prices at what they actually were, so a different nomination order would have no modelled
+  consequence anyway. `scripts/backtest.py --nominations` grades the model's *claims about
+  the room* instead (did the drains sell to a rival, above what you'd have paid, to a team
+  it named as able to reach them), against null baselines, and prints that caveat every
+  run. `_STUCK_DECAY` in particular cannot be fitted from any record here: it is the chance
+  nobody bids at all, and a record of completed sales contains no such event.
 - **Auction prices, when nobody publishes one.** Yahoo's `average_cost` is live-only, and
   offline the sole other source is an auction column in your projections CSV. Without
   either, the app prices the board from what your own room has been paying per dollar of

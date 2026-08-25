@@ -6,9 +6,9 @@ import threading
 
 import pytest
 
-from ff_helper.draft.state import DraftState, pick_number, picks_for_slot
+from ff_helper.draft.state import BridgeSale, DraftState, pick_number, picks_for_slot
 from ff_helper.draft.sync import DraftSync
-from ff_helper.yahoo.models import DraftPick, League, Team
+from ff_helper.yahoo.models import DraftPick, KeptPlayer, League, Team
 
 
 def league(num_teams=12, status="drafting") -> League:
@@ -285,3 +285,105 @@ class TestConcurrency:
             thread.join(timeout=10)
 
         assert not failures, f"torn read: {failures[:3]}"
+
+
+class TestBoardKey:
+    """The cache key must move when the board does, and stay put when it does not.
+
+    Both directions cost. A key that fails to move serves yesterday's prices with no error
+    anywhere; a key that moves for nothing throws away the whole point of caching. The
+    counter this replaced failed in *both* directions, which is why the key is now derived
+    from the board rather than maintained by hand.
+    """
+
+    def board(self):
+        state_ = state()
+        state_.apply_sync(
+            [
+                DraftPick(pick=n, round=1, team_key=f"461.l.1.t.{n}", player_key=f"p.{n}")
+                for n in range(1, 40)
+            ],
+            timestamp=1.0,
+        )
+        return state_
+
+    # Every public method that can change what the board says.
+    MUTATIONS = {
+        "apply_sync": lambda s: s.apply_sync(
+            [DraftPick(pick=99, round=1, team_key="461.l.1.t.1", player_key="p.new")],
+            timestamp=2.0,
+        ),
+        "record_manual": lambda s: s.record_manual("p.manual"),
+        "drop_player": lambda s: s.drop_player("p.1"),
+        "remove_player": lambda s: s.remove_player("p.2"),
+        "apply_keepers": lambda s: s.apply_keepers(
+            [KeptPlayer(player_key="p.kept", team_key="461.l.1.t.1", cost=5)]
+        ),
+        "apply_bridge": lambda s: s.apply_bridge(
+            [BridgeSale(player_key="p.bridged", team_key="461.l.1.t.3", cost=4, pick=200)],
+            timestamp=2.0,
+        ),
+        "roster_size": lambda s: setattr(s, "roster_size", s.roster_size + 1),
+        "teams": lambda s: s.teams.pop(),
+    }
+
+    def test_every_real_mutation_moves_the_key(self):
+        """Including the two fields the old counter could not see.
+
+        ``roster_size`` and ``teams`` are plain public attributes that feed slots_remaining,
+        max_bid and the league position counts. Under the counter they were engine inputs
+        outside the discipline: writing one left the cache serving a board computed against
+        the old value, with nothing to notice.
+        """
+        for name, mutate in self.MUTATIONS.items():
+            board = self.board()
+            before = board.board_key
+            mutate(board)
+            assert board.board_key != before, f"{name} did not move the board key"
+
+    def test_undo_moves_the_key(self):
+        board = self.board()
+        board.record_manual("p.oops")
+        after_entry = board.board_key
+        board.undo_last_manual()
+        assert board.board_key != after_entry
+
+    def test_a_poll_reporting_nothing_new_does_not_move_the_key(self):
+        """The failure that made the cache worthless in the live app.
+
+        ``DraftSync.poll_once`` hands ``apply_sync`` Yahoo's *entire* result list every two
+        seconds whether or not anything changed. The counter bumped once for the call and
+        again for every pick's ``drop_player``, so an unchanged payload moved it by 101 on a
+        100-sale board and the cache never survived from one page poll to the next.
+        """
+        board = self.board()
+        picks = sorted(board.synced.values())
+        settled = board.board_key
+        board.apply_sync(picks, timestamp=2.0)
+        assert board.board_key == settled
+        board.apply_sync(picks, timestamp=3.0)
+        assert board.board_key == settled
+
+    def test_a_read_does_not_move_the_key(self):
+        board = self.board()
+        settled = board.board_key
+        board.board  # noqa: B018
+        board.drafted_player_keys  # noqa: B018
+        board.picks_by_team("461.l.1.t.1")
+        board.roster_counts("461.l.1.t.1", {"p.1": "RB"})
+        board.my_max_bid()
+        assert board.board_key == settled
+
+    def test_bookkeeping_that_no_engine_reads_does_not_move_the_key(self):
+        """``last_sync`` ticks every poll; invalidating on it would be the counter's bug."""
+        board = self.board()
+        settled = board.board_key
+        board.last_sync = 999.0
+        board.last_sync_error = "transient"
+        board.superseded.append("noted")
+        assert board.board_key == settled
+
+    def test_the_key_survives_a_rebuild_of_the_same_board(self):
+        """Equal boards key equal, so the fingerprint is content and not identity."""
+        first, second = self.board(), self.board()
+        assert first.board_key == second.board_key

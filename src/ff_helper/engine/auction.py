@@ -339,6 +339,13 @@ class PriceBasis:
     Here the room tier is exactly right: "what will a receiver of about this quality cost
     me" is the positional question it can answer.
 
+    ``engine/nomination.py`` is the third consumer, and it reads both: ``estimate`` for
+    "how much money leaves the room if he sells" -- a budgeting question about a price
+    *level* -- and ``surplus`` (hence ``market_price``) for "this room overpays for *him*",
+    which is the individual claim the room tier cannot support. It also reads ``tier``,
+    below, because it needs one thing no consumer here ever did: whether any price from
+    outside me exists at all. See that module for what the drain model does when none does.
+
     Measured on the one recorded auction (full replay / policy from pick 45 / compared
     through pick 95), against the same tiers with the room tier promoted into
     ``market_price`` as well:
@@ -389,6 +396,25 @@ class PriceBasis:
     def is_inferred(self, player_key: str) -> bool:
         """True when a market price exists but no source published this one."""
         return player_key in self.interpolated
+
+    def tier(self, player_key: str) -> str:
+        """Which tier ``estimate`` would read: published | interpolated | room | own.
+
+        ``is_inferred`` already distinguishes the first two, and that flag is in the API
+        payload and read by the page -- this does not replace it. What it adds is the one
+        distinction the buy side never needed: ``"own"`` means *no* tier had anything, so
+        the price is my own sheet with no external level under it at all. Only a consumer
+        making a claim about the room rather than about my board has to care, which is why
+        it arrives with ``engine/nomination.py`` and not before.
+        """
+        for name, prices in (
+            ("published", self.published),
+            ("interpolated", self.interpolated),
+            ("room", self.room),
+        ):
+            if player_key in prices:
+                return name
+        return "own"
 
 
 def _dollars(amount: float) -> int:
@@ -504,6 +530,30 @@ class AuctionRecommendation:
     # plan could be computed). Its value is the downward signal: "worth $90, but stop
     # at $87 -- the rest of your plan needs the difference."
     plan_bid: int | None = None
+
+    # The three fields below are read by ``engine/nomination.py`` and by nothing here:
+    # not ``rank_key``, not ``bid_to``, not ``_explain``. They are recorded rather than
+    # recomputed because a nomination score built from a second opinion about the same
+    # board would be a worse bug than no nomination list at all.
+
+    # What the whole room pays to take him off the board -- ``PriceBasis.estimate``, so
+    # the room tier is in it. A *budgeting* number and never an individual claim: it is
+    # exactly what ``market``, ``surplus`` and ``affordable`` deliberately refuse to say.
+    # Deliberately not the local ``expected_price`` the dart ceiling uses, which skips the
+    # room tier on purpose -- see the comment there for why those two must differ.
+    budget_price: float | None = None
+
+    # Which ``PriceBasis`` tier ``budget_price`` came from. ``market_estimated`` already
+    # says "interpolated" and this does not replace it; "own" is the new information --
+    # no source, no interpolation and no room premium, so the number is my own sheet
+    # talking to itself and a claim about the room built on it is circular.
+    price_basis: str = "own"
+
+    # The plan's marginal of owning him at ``MIN_BID``, in dollars: what "nobody else bids
+    # and I keep him for $1" is worth. None exactly when ``plan_bid`` is. Raw rather than
+    # ``penalized`` -- that helper is a rank transform that divides on negatives, and this
+    # is read as money. Apply ``depth_factor`` yourself if you want the depth discount.
+    min_bid_marginal: float | None = None
 
     @property
     def name(self) -> str:
@@ -756,6 +806,7 @@ def recommend_auction(
     # stud at a puntable position scores below the same stud at one that cannot wait.
     plan_mode = my_budget_remaining is not None
     plan_bid_of: dict[str, int] = {}
+    min_bid_marginal_of: dict[str, float] = {}
     if plan_mode:
         needs: list[frozenset[str]] = []
         for position in sorted(open_dedicated):
@@ -910,6 +961,20 @@ def recommend_auction(
             # capped worth -- which is what the no-plan branch would have said anyway, so
             # it is harmless, just not the break-even the name promises.
             plan_bid_of[key] = plan_bid_for(valuation.position, adjusted)
+            # Free: ``plan_bid_for`` evaluates this exact call on its first line and
+            # ``after_cache`` memoizes it, so the second lookup costs a dict hit.
+            #
+            # Deliberately *not* run through ``penalized``, unlike ``score`` above. That
+            # helper divides when its argument is negative -- a rank-order transform, on
+            # purpose (see its docstring) -- and this field is read as **dollars**: it is
+            # subtracted from another player's marginal and summed with ``drain_gain``.
+            # Penalizing it mixed scales, because a marginal at ``need`` 0.04 came back 25x
+            # magnified while the baseline it is compared against sat at ``need`` 1.0. A
+            # consumer that wants the depth discount has ``depth_factor`` on the same row
+            # and can apply it as a plain multiply, which preserves the unit.
+            min_bid_marginal_of[key] = (
+                adjusted + plan_after(valuation.position, MIN_BID) - base_plan
+            )
         if valuation.is_injured:
             score = penalized(score, _INJURY_RESIDUAL)
 
@@ -943,6 +1008,9 @@ def recommend_auction(
                 market_estimated=market_estimated,
                 smart_cap=smart_cap,
                 plan_bid=plan_bid_of.get(key),
+                budget_price=basis.estimate(key),
+                price_basis=basis.tier(key),
+                min_bid_marginal=min_bid_marginal_of.get(key),
                 reason=_explain(
                     valuation,
                     adjusted,
