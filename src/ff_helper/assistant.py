@@ -7,13 +7,14 @@ draft: given what is gone, who should I take?
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
 
 from ff_helper import config
 from ff_helper.draft.state import DraftState
-from ff_helper.engine import lineup, replacement
+from ff_helper.engine import lineup, nomination, replacement
 from ff_helper.engine.auction import (
     AuctionRecommendation,
     DollarValues,
@@ -31,6 +32,20 @@ from ff_helper.rankings.cache import Snapshot
 from ff_helper.rankings.players import PlayerRegistry
 from ff_helper.rankings.sources import yahoo_adp
 from ff_helper.yahoo.models import League
+
+# High enough to leave the pool untruncated wherever a whole-board run is wanted.
+_WHOLE_POOL = 10_000
+
+log = logging.getLogger(__name__)
+
+
+class _NominationModelError(Exception):
+    """Raised when the nomination model itself fails, so the endpoint can tell it apart.
+
+    The shared engine beneath it raises whatever it raises, uncaught, which is the point:
+    a buy-side bug must not be reported to the drafter as "the nomination model is
+    unavailable, the board above is unaffected" while the board is in fact broken too.
+    """
 
 
 @dataclass
@@ -51,6 +66,29 @@ class Assistant:
     # Monte Carlo rollouts per snake recommendation; 0 keeps the analytic model alone.
     # ``build`` reads FF_MC_ROLLOUTS; tests and scripts may set it directly.
     mc_rollouts: int = 0
+    # The last whole-pool auction run, keyed by ``DraftState.board_key``. Both the buy list
+    # and the nomination list need the *same* board priced, and the page asks for both on
+    # every 2-second poll. Measured on this league's 524-player opening board, one poll
+    # serving both panels: 30.9 ms when a sale has landed, 2.6 ms when the poller merely
+    # re-sent an unchanged list -- which is most polls, since sales arrive far slower than
+    # 2 s. That second figure is the one a counter could not deliver: ``apply_sync`` fires
+    # on every tick regardless, so a bumped-by-hand key was cold every time and the saving
+    # existed only in tests. See ``DraftState.board_key``. ``limit`` only slices at the end
+    # of ``recommend_auction``, so one full list serves every caller.
+    _auction_cache: tuple[int, list[AuctionRecommendation]] | None = field(
+        default=None, repr=False, compare=False
+    )
+    # Guards *computing* that cache, never the board. Held across the engine call so a
+    # concurrent second caller waits and takes the result instead of duplicating it --
+    # which is the whole saving, since the page fires both requests at once.
+    #
+    # It is emphatically not ``self.lock``: holding the board lock across the engine is the
+    # thing this repo forbids, because the poller thread would block behind it. Lock order
+    # is always _engine_lock -> lock and never the reverse, and the poller takes only
+    # ``lock``, so the two cannot deadlock.
+    _engine_lock: threading.Lock = field(
+        default_factory=threading.Lock, repr=False, compare=False
+    )
 
     @property
     def is_auction(self) -> bool:
@@ -366,66 +404,211 @@ class Assistant:
         """
         if self.dollars is None or self.league.settings is None:
             return []
+        return self._priced_board()[:limit]
 
-        with self.lock:
-            position_of = self.position_of
-            roster = self.state.my_roster_counts(position_of)
-            available = self.available()
-            roster_byes = self._my_roster_byes()
-            money_remaining = self.state.league_money_remaining()
-            slots_remaining = self.state.league_slots_remaining()
-            my_max_bid = self.state.my_max_bid()
-            my_team = self.state.my_team
-            my_budget = self.state.budget_remaining(my_team.team_key) if my_team else None
+    def _priced_board(self, alongside=None):
+        """The whole pool, priced once per board state.
 
-            # Positions rostered across the whole league, keepers included -- the smart
-            # cap needs to know how many teams still compete for each position's leftovers.
-            league_counts: dict[str, int] = {}
-            for team in self.state.teams:
-                for position, count in self.state.roster_counts(team.team_key, position_of).items():
-                    league_counts[position] = league_counts.get(position, 0) + count
+        ``limit`` is a slice at the very end of ``recommend_auction`` and changes nothing
+        above it, so one full run serves the buy list, the nomination list and the backtest
+        alike. Keyed on ``DraftState.board_key``, a fingerprint of the board itself.
 
-            # Completed sales with real prices feed the room premium. Keeper salaries are
-            # not sales and carry no price on the board, so they fall out naturally.
-            sales: list[Sale] = []
-            for pick in self.state.board.values():
-                if pick.cost is None or pick.cost <= 0:
-                    continue
-                valuation = self.valuations.valuations.get(pick.player_key)
-                if valuation is None:
-                    continue
-                # Par is the fallback basis, and it is the only one whenever no source
-                # priced the player -- the usual case offline, where an auction column in
-                # the projections CSV is the only way a cost arrives at all.
-                # ``auction.PriceBasis``'s room tier leans on this: it reads the premium as
-                # a per-position *ratio* rather than a price level, which is why a pool of
-                # mixed bases (some sales measured against a sheet cost, some against par)
-                # degrades its precision rather than its meaning.
-                expected = valuation.market_cost
-                if expected is None:
-                    expected = self.dollars.value_of(pick.player_key)
-                sales.append(
-                    Sale(position=valuation.position, price=float(pick.cost), expected=expected)
-                )
+        ``alongside`` is a callable run inside the *same* lock hold that reads the key, and
+        its result comes back beside the board. That is not a convenience: the nomination
+        list needs rival budgets and roster holes drawn from the identical board these
+        prices describe. Reading them in a separate acquisition let the two straddle a sale
+        -- demonstrated, a rival whose real ``max_bid`` was 0 still named in "Aimed at",
+        which is the one column that panel exists for. ``auction_recommendations`` never had
+        the split; this restores the same one-snapshot guarantee to the other caller.
+        """
+        assert self.dollars is not None and self.league.settings is not None
+
+        with self._engine_lock:
+            with self.lock:
+                key = self.state.board_key
+                extra = alongside() if alongside is not None else None
+                cached = self._auction_cache
+                if cached is not None and cached[0] == key:
+                    return (cached[1], extra) if alongside is not None else cached[1]
+                inputs = self._auction_inputs()
+            if inputs is None:
+                return ([], extra) if alongside is not None else []
+            picks = recommend_auction(*inputs[0], **inputs[1])
+            with self.lock:
+                # Only cache if the board has not moved while the engine ran. A sale landing
+                # mid-computation makes these numbers one pick stale; serving them once is
+                # the staleness every poll already carries, but storing them under the *new*
+                # key would pin that staleness until the next sale.
+                if self.state.board_key == key:
+                    self._auction_cache = (key, picks)
+            return (picks, extra) if alongside is not None else picks
+
+    def _auction_inputs(self):
+        """Everything ``recommend_auction`` needs, read off the board. Caller holds the lock."""
+        position_of = self.position_of
+        roster = self.state.my_roster_counts(position_of)
+        available = self.available()
+        roster_byes = self._my_roster_byes()
+        money_remaining = self.state.league_money_remaining()
+        slots_remaining = self.state.league_slots_remaining()
+        my_max_bid = self.state.my_max_bid()
+        my_team = self.state.my_team
+        my_budget = self.state.budget_remaining(my_team.team_key) if my_team else None
+
+        # Positions rostered across the whole league, keepers included -- the smart
+        # cap needs to know how many teams still compete for each position's leftovers.
+        league_counts: dict[str, int] = {}
+        for team in self.state.teams:
+            for position, count in self.state.roster_counts(team.team_key, position_of).items():
+                league_counts[position] = league_counts.get(position, 0) + count
+
+        # Completed sales with real prices feed the room premium. Keeper salaries are
+        # not sales and carry no price on the board, so they fall out naturally.
+        sales: list[Sale] = []
+        for pick in self.state.board.values():
+            if pick.cost is None or pick.cost <= 0:
+                continue
+            valuation = self.valuations.valuations.get(pick.player_key)
+            if valuation is None:
+                continue
+            # Par is the fallback basis, and it is the only one whenever no source
+            # priced the player -- the usual case offline, where an auction column in
+            # the projections CSV is the only way a cost arrives at all.
+            # ``auction.PriceBasis``'s room tier leans on this: it reads the premium as
+            # a per-position *ratio* rather than a price level, which is why a pool of
+            # mixed bases (some sales measured against a sheet cost, some against par)
+            # degrades its precision rather than its meaning.
+            expected = valuation.market_cost
+            if expected is None:
+                expected = self.dollars.value_of(pick.player_key)
+            sales.append(
+                Sale(position=valuation.position, price=float(pick.cost), expected=expected)
+            )
 
         if not available:
+            return None
+
+        return (
+            (available, self.levels, self.dollars, self.league.settings, roster),
+            {
+                "money_remaining": money_remaining,
+                "slots_remaining": slots_remaining,
+                "my_max_bid": my_max_bid,
+                "my_budget_remaining": my_budget,
+                "league_position_counts": league_counts,
+                "sales": sales,
+                "roster_byes": roster_byes,
+                "limit": _WHOLE_POOL,
+            },
+        )
+
+    def _rival_seats(self, position_of: dict[str, str]) -> list[nomination.RivalSeat]:
+        """Every opponent's roster, budget and ceiling. Caller must hold the lock.
+
+        The per-team parallel to ``auction_recommendations``' league-wide flatten, which is
+        deliberately left exactly as it is: that dict sizes the competition for a position's
+        *leftovers* and feeds the smart cap, and widening it would move numbers on the buy
+        side that nothing here is allowed to move. (``slot_ladder``'s docstring notes that
+        genuine unmet starting demand needs per-team counts, which these now make available
+        -- that is a separate change, gated on its own backtest.)
+
+        ``_position_demand`` already walks every opponent through ``assign_lineup`` for the
+        snake path and is likewise untouched, so this diff reaches no snake code at all.
+        """
+        seats: list[nomination.RivalSeat] = []
+        for team in self.state.teams:
+            if team.is_mine:
+                continue
+            seats.append(
+                nomination.RivalSeat(
+                    team_key=team.team_key,
+                    name=team.name,
+                    roster_counts=self.state.roster_counts(team.team_key, position_of),
+                    max_bid=self.state.max_bid(team.team_key),
+                )
+            )
+        return seats
+
+    def nomination_list(
+        self, limit: int = 6, *, nomination_only: bool = False
+    ) -> list[nomination.NominationCandidate]:
+        """Whose name to say next -- the other half of an auction.
+
+        ``auction_recommendations`` answers "who should I bid on". This answers "whose name
+        should I say", which is mostly a question about other people's money.
+
+        The engine runs over the **whole** pool, not a short list. The best drain is by
+        construction a player the buy list ranks low -- that is what "I do not want him"
+        means -- so a short list here would hand the model exactly the players it exists to
+        steer you away from nominating, and the bug would render perfectly.
+
+        It reads the *same* priced board the buy list does, through ``_priced_board``'s
+        revision cache, rather than running the engine again. Two things follow, and both
+        matter. The poll stays at one ~45 ms engine pass on this league's 524-player opening
+        board instead of two. And both panels necessarily quote the same numbers for the
+        same player -- two prices five seconds apart is the mistake ``evaluate``'s docstring
+        already argues against, and here they would have been two prices *simultaneously*.
+
+        Sharing the result does not weaken the isolation this module wanted: the shared
+        object is the buy-side output, produced by buy-side code, so a bug in the nomination
+        model still cannot reach ``/api/recommend``.
+        """
+        if not self.is_auction or self.dollars is None or self.league.settings is None:
             return []
 
-        return recommend_auction(
-            available,
-            self.levels,
-            self.dollars,
-            self.league.settings,
-            roster,
-            money_remaining=money_remaining,
-            slots_remaining=slots_remaining,
-            my_max_bid=my_max_bid,
-            my_budget_remaining=my_budget,
-            league_position_counts=league_counts,
-            sales=sales,
-            roster_byes=roster_byes,
-            limit=limit,
-        )
+        def board_facts():
+            """Read under the same lock hold that fingerprints the board. See _priced_board."""
+            position_of = self.position_of
+            my_team = self.state.my_team
+            if my_team is None:
+                return None
+            return (
+                self.state.my_roster_counts(position_of),
+                self.state.budget_remaining(my_team.team_key),
+                self.state.slots_remaining(my_team.team_key),
+                self.state.league_money_remaining(),
+                self._rival_seats(position_of),
+            )
+
+        # The same priced board the buy list reads, not a second run of it. Shared through
+        # ``_priced_board``'s cache, so when the page fires both requests at once the second
+        # one waits on ``_engine_lock`` and takes the first one's result.
+        picks, facts = self._priced_board(alongside=board_facts)
+        if not picks or facts is None:
+            return []
+        my_roster, my_budget, my_slots, league_money, rivals = facts
+
+        if not nomination_only:
+            return nomination.recommend_nominations(
+                picks,
+                self.league.settings,
+                my_roster,
+                rivals,
+                my_budget_remaining=my_budget,
+                my_slots_remaining=my_slots,
+                league_money_remaining=league_money,
+                limit=limit,
+            )
+
+        # ``nomination_only`` marks where the isolation boundary actually is. Everything
+        # above this point is the *shared* board -- the same ``recommend_auction`` pass
+        # ``/api/recommend`` serves -- so a failure there must surface the way it does on the
+        # buy side rather than being reported as a broken nomination model. Only the call
+        # below is this module's own work, and only it is the endpoint's to catch.
+        try:
+            return nomination.recommend_nominations(
+                picks,
+                self.league.settings,
+                my_roster,
+                rivals,
+                my_budget_remaining=my_budget,
+                my_slots_remaining=my_slots,
+                league_money_remaining=league_money,
+                limit=limit,
+            )
+        except Exception:
+            log.exception("nomination model failed")
+            raise _NominationModelError from None
 
     def current_inflation(self) -> float:
         """Live price level versus par, for display."""

@@ -28,6 +28,7 @@ from ff_helper.backtest.counterfactual import (
     auction_counterfactual,
     counterfactual,
 )
+from ff_helper.backtest.nominations import format_report, nomination_report
 from ff_helper.draft.state import DraftState
 from ff_helper.engine import auction, lineup
 from ff_helper.yahoo.models import DraftPick
@@ -436,3 +437,57 @@ def _fake_recommendation(*, bid_to: int, affordable: bool, score: float):
     r.affordable = affordable
     r.score = score
     return r
+
+
+@pytest.fixture(scope="module")
+def report(auction_world):
+    return nomination_report(*auction_world, limit=3)
+
+
+class TestNominationRetrospective:
+    """The nomination model's predictions, graded against a record.
+
+    Not a counterfactual and it must never grow into one -- the record has no nominator
+    field and ``auction_counterfactual`` freezes prices, so no nomination order has a
+    modelled consequence. What is testable is that the grading is *sound*: that it changes
+    no sale, that its baselines are the right shape, and that it refuses a snake record
+    rather than printing something meaningless.
+    """
+
+    def test_it_grades_something(self, report):
+        assert report.named > 0
+        assert report.drains + report.bargains == report.named
+        assert report.buyer_named.total > 0
+
+    def test_the_named_set_is_a_subset_of_the_position_only_set(self, report):
+        """``live_bidders`` adds a money constraint, so it can only tighten.
+
+        If recall ever exceeds the position-only baseline the two are measuring different
+        populations and the comparison in the report is meaningless.
+        """
+        assert report.buyer_named.rate <= report.baseline_any_open.rate
+        assert report.named_size <= report.open_size
+
+    def test_a_smaller_set_is_what_the_money_gate_buys(self, report):
+        assert report.named_size > 0
+        assert report.baseline_deepest.total == report.buyer_named.total
+
+    def test_grading_changes_no_sale(self, auction_world):
+        """The replay is a bystander: it must leave the recorded draft untouched."""
+        record, snapshot = auction_world
+        before = [(p.pick, p.player_key, p.team_key, p.cost) for p in sorted(record.picks)]
+        nomination_report(record, snapshot, limit=3)
+        after = [(p.pick, p.player_key, p.team_key, p.cost) for p in sorted(record.picks)]
+        assert before == after
+
+    def test_a_snake_record_is_refused(self, world):
+        record, snapshot = world
+        with pytest.raises(ValueError, match="auction"):
+            nomination_report(record, snapshot, limit=3)
+
+    def test_the_report_says_what_it_cannot_say(self, report):
+        """The honesty paragraph is printed, not merely documented."""
+        text = format_report(report, limit=3)
+        assert "never as a counterfactual" in text
+        assert "no nominator field" in text
+        assert "NOT a fit for _STUCK_DECAY" in text

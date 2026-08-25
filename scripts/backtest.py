@@ -33,7 +33,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from ff_helper.assistant import Assistant  # noqa: E402
-from ff_helper.backtest import calibration, counterfactual  # noqa: E402
+from ff_helper.backtest import calibration, counterfactual, nominations  # noqa: E402
 from ff_helper.backtest.capture import DraftRecord, build_state, load_record  # noqa: E402
 from ff_helper.rankings import cache  # noqa: E402
 from ff_helper.rankings.cache import Snapshot  # noqa: E402
@@ -59,6 +59,8 @@ def run(
     follow_from: int | None = None,
     stop_after: int | None = None,
     display_limit: int = 8,
+    nominate: bool = False,
+    nomination_limit: int = 5,
 ) -> None:
     my_team = record.my_team
     print(
@@ -118,10 +120,18 @@ def run(
                 f"{result.total_vor:11.1f} {result.spent:7d} {len(result.players):6d}"
             )
         print("  (prices held at what they actually were -- see counterfactual.py)")
+        if nominate:
+            print()
+            report = nominations.nomination_report(
+                record, snapshot, limit=nomination_limit
+            )
+            print(nominations.format_report(report, limit=nomination_limit))
         return
 
     if stop_after is not None:
         print("\n--stop-after is auction-only; ignoring it for this snake record.")
+    if nominate:
+        print("\n--nominations is auction-only; a snake draft has no nominations.")
 
     # -- calibration ---------------------------------------------------------------
     report = calibration.survival_calibration(
@@ -190,6 +200,21 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--nominations",
+        action="store_true",
+        help=(
+            "Auction only: grade the nomination model's predictions against the record. "
+            "Calibration, not a counterfactual -- the record has no nominator field and "
+            "prices are frozen, so no nomination order has a modelled consequence."
+        ),
+    )
+    parser.add_argument(
+        "--nomination-limit",
+        type=int,
+        default=5,
+        help="How many nominations to name before each sale when grading (default 5).",
+    )
+    parser.add_argument(
         "--predictor",
         choices=sorted(PREDICTORS),
         default="analytic",
@@ -232,6 +257,8 @@ def main() -> int:
         follow_from=args.follow_from,
         stop_after=args.stop_after,
         display_limit=args.display_limit,
+        nominate=args.nominations,
+        nomination_limit=args.nomination_limit,
     )
     return 0
 
