@@ -743,3 +743,145 @@ class TestUnpricedAuctionKeepers:
     def test_a_keeper_outside_the_snapshot_is_called_out(self):
         assistant, _ = auction_state([KeptPlayer(player_key="461.p.NOPE", team_key=MY_KEY, cost=5)])
         assert any("not in the ranking snapshot" in note for note in assistant.notes)
+
+
+class TestKeepersThatCostAPick:
+    """Leagues where a keeper is slotted into the board instead of costing a roster spot.
+
+    The dense snake is not merely imprecise here, it is wrong at almost every pick: one
+    keeper ahead of me in round 1 shifts every later pick number by one, and the offsets
+    never resynchronise. Measured on the real 2026 Shiva board (27 keepers, 123 live
+    picks) the dense mapping named the right team for 10 of 123 picks and fired
+    ``is_my_turn`` correctly at 2 of my 13 turns.
+    """
+
+    # Two teams keep in round 1 and one in round 3; slot 5 (mine) keeps in round 2.
+    KEPT = (
+        (1, 1),   # slot 1, round 1
+        (3, 1),   # slot 3, round 1
+        (MY_SLOT, 2),
+        (7, 3),
+    )
+
+    def _state(self, kept=None, roster_size=15):
+        state = DraftState(
+            league=build_league(), teams=auction_teams(), roster_size=roster_size
+        )
+        state.apply_keepers(kept if kept is not None else self._keepers())
+        return state
+
+    def _keepers(self, *, rounds=True):
+        return [
+            KeptPlayer(
+                player_key=f"461.p.RB{index}",
+                team_key=f"461.l.1.t.{slot}",
+                round=(round_cost if rounds else None),
+            )
+            for index, (slot, round_cost) in enumerate(self.KEPT)
+        ]
+
+    def _truth(self, roster_size=15):
+        """Who owns each live pick, built independently of the code under test."""
+        consumed = {(round_cost, slot) for slot, round_cost in self.KEPT}
+        owners = []
+        for round_number in range(1, roster_size + 1):
+            order = range(1, NUM_TEAMS + 1)
+            if round_number % 2 == 0:
+                order = range(NUM_TEAMS, 0, -1)
+            for slot in order:
+                if (round_number, slot) not in consumed:
+                    owners.append(slot)
+        return owners
+
+    def test_pick_ownership_matches_ground_truth(self):
+        state = self._state()
+        truth = self._truth()
+        assert len(truth) == state.total_picks
+        got = [state.team_for_pick(p).draft_position for p in range(1, len(truth) + 1)]
+        assert got == truth
+
+    def test_the_dense_fallback_is_the_thing_being_fixed(self):
+        """Guards the premise: without rounds the mapping really is wrong."""
+        state = self._state(self._keepers(rounds=False))
+        assert state.pick_schedule is None
+        truth = self._truth()
+        wrong = sum(
+            1
+            for pick, slot in enumerate(truth, 1)
+            if state.team_for_pick(pick).draft_position != slot
+        )
+        assert wrong > len(truth) // 2
+
+    def test_my_turns_are_exact(self):
+        state = self._state()
+        truth = self._truth()
+        assert state.my_picks == [p for p, slot in enumerate(truth, 1) if slot == MY_SLOT]
+
+    def test_i_pick_once_per_round_i_did_not_keep_in(self):
+        state = self._state()
+        # 15 roster spots, one keeper of mine, so fourteen turns -- and none in round 2.
+        assert len(state.my_picks) == 14
+        assert 2 not in [state.round_for_pick(p) for p in state.my_picks]
+
+    def test_every_team_gets_the_picks_its_keepers_left_it(self):
+        state = self._state()
+        schedule = state.pick_schedule
+        for team in state.teams:
+            drafted = sum(1 for slot, _ in schedule if slot == team.draft_position)
+            assert drafted == 15 - len(state.keepers_for(team.team_key))
+
+    def test_no_turn_falls_outside_the_draft(self):
+        """The dense model put my last turn past the final pick, so I lost it."""
+        state = self._state()
+        assert max(state.my_picks) <= state.total_picks
+
+    def test_rounds_are_reported_against_the_real_board(self):
+        state = self._state()
+        # Slot 1 keeps at 1.01, so the first live pick is slot 2's, still in round 1.
+        assert state.round_for_pick(1) == 1
+        assert state.team_for_pick(1).draft_position == 2
+        assert state.round_for_pick(state.total_picks) == 15
+
+    def test_a_partial_round_column_is_refused_whole(self):
+        """Half a schedule is wrong quietly; the dense fallback is wrong on the record."""
+        kept = self._keepers()
+        kept[1] = KeptPlayer(player_key=kept[1].player_key, team_key=kept[1].team_key)
+        state = self._state(kept)
+        assert state.pick_schedule is None
+        assert "no round recorded" in state.pick_schedule_reason
+
+    def test_a_round_outside_the_draft_is_refused(self):
+        kept = self._keepers()
+        kept[0] = KeptPlayer(
+            player_key=kept[0].player_key, team_key=kept[0].team_key, round=99
+        )
+        state = self._state(kept)
+        assert state.pick_schedule is None
+        assert "outside" in state.pick_schedule_reason
+
+    def test_keepers_without_rounds_leave_behaviour_unchanged(self):
+        """The overwhelmingly common case: nothing about the old maths moves."""
+        kept = self._keepers(rounds=False)
+        state = self._state(kept)
+        assert state.pick_schedule is None
+        assert state.pick_schedule_reason == ""
+        assert state.my_picks == DraftState(
+            league=build_league(), teams=auction_teams(), roster_size=15
+        ).my_picks[:len(state.my_picks)]
+
+    def test_the_schedule_is_derived_not_maintained(self):
+        """A fingerprint, so a writer that forgets to invalidate cannot go stale."""
+        state = self._state()
+        first = state.my_picks
+        state.apply_keepers(self._keepers()[:1])  # one keeper now, not four
+        assert state.my_picks != first
+        assert len(state.my_picks) == 15  # I no longer keep anyone
+
+    def test_two_keepers_cannot_hold_one_board_position(self, tmp_path):
+        path = tmp_path / "k.csv"
+        path.write_text(
+            f"player,team,round\nRB Player0,{MY_KEY},4\nRB Player1,{MY_KEY},4\n"
+        )
+        registry = PlayerRegistry(build_snapshot().players)
+        with pytest.raises(keepers.KeeperError, match="both costing round 4"):
+            keepers.load_csv(path, registry, auction_teams())

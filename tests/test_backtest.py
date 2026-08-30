@@ -9,7 +9,9 @@ here means the model broke, not that the world got weird.
 
 from __future__ import annotations
 
+import json
 import random
+from dataclasses import replace
 
 import pytest
 
@@ -20,6 +22,7 @@ from ff_helper.backtest.capture import (
     build_state,
     load_record,
     record_from_live,
+    rekeyed,
     save_record,
 )
 from ff_helper.backtest.counterfactual import (
@@ -143,6 +146,61 @@ class TestCapture:
         assert loaded.my_team is not None
         assert loaded.my_team.team_key == record.my_team.team_key
         assert loaded.picks == record.picks
+
+    def test_player_names_round_trip(self, world, tmp_path):
+        """A record outlives its snapshot only if it carries names."""
+        record, _ = world
+        named = replace(
+            record,
+            player_names={p.player_key: f"Name {p.pick}" for p in record.picks},
+        )
+        loaded = load_record(save_record(named, tmp_path / "named.json"))
+        assert loaded.player_names == named.player_names
+
+    def test_a_record_without_names_still_loads(self, world, tmp_path):
+        """Purely additive: records written before the field have none, not a crash."""
+        record, _ = world
+        path = save_record(record, tmp_path / "plain.json")
+        payload = json.loads(path.read_text())
+        del payload["player_names"]
+        path.write_text(json.dumps(payload))
+        assert load_record(path).player_names == {}
+
+    def test_rekeyed_repoints_players_onto_another_snapshot(self, world):
+        """The 2025 Shiva case: the snapshot that minted these keys is gone."""
+        record, snapshot = world
+        names = {
+            player.player_key: player.full_name
+            for player in snapshot.players
+        }
+        stale = replace(
+            record,
+            picks=tuple(
+                replace(p, player_key=f"gone.{p.player_key}") for p in record.picks
+            ),
+            player_names={f"gone.{k}": v for k, v in names.items()},
+        )
+        fixed, unmatched = rekeyed(stale, snapshot.players)
+        assert not unmatched
+        assert [p.player_key for p in fixed.picks] == [
+            p.player_key for p in record.picks
+        ]
+
+    def test_rekeyed_keeps_unknown_players_rather_than_dropping_picks(self, world):
+        """Dropping the pick would renumber every pick after it."""
+        record, snapshot = world
+        stale = replace(
+            record, player_names={record.picks[0].player_key: "Nobody By That Name"}
+        )
+        fixed, unmatched = rekeyed(stale, snapshot.players)
+        assert unmatched == ["Nobody By That Name"]
+        assert len(fixed.picks) == len(record.picks)
+        assert fixed.picks[0].player_key == record.picks[0].player_key
+
+    def test_rekeyed_is_a_no_op_without_names(self, world):
+        record, snapshot = world
+        fixed, unmatched = rekeyed(record, snapshot.players)
+        assert fixed is record and unmatched == []
 
     def test_keepers_round_trip_and_shape_the_board(self, world, tmp_path):
         # A keeper league without its keepers round-trips into a keeper-free board:

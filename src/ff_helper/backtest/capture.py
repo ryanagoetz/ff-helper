@@ -13,7 +13,7 @@ snapshot is the whole point.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from ff_helper.draft.state import DraftState
@@ -47,6 +47,16 @@ class DraftRecord:
     # Which ranking snapshot this draft should be evaluated against; a league key for
     # ``cache.load`` or None to fall back to the record's own league key.
     snapshot_ref: str | None = None
+    # player_key -> name, for records whose snapshot no longer exists. A player key is
+    # only meaningful next to the snapshot that minted it, so a record outlives its
+    # snapshot as a list of opaque ids: the 2025 Shiva draft was unreplayable for exactly
+    # this reason. Names survive the season, so a record carrying them can be crosswalked
+    # onto whatever snapshot is at hand -- with the caveat that valuing an old draft with
+    # a new season's numbers measures value drift as much as anything.
+    #
+    # Optional and purely additive, so it needs no version bump: records written before
+    # it simply have none, and every consumer treats an empty mapping as "no names".
+    player_names: dict[str, str] = field(default_factory=dict)
     version: int = RECORD_VERSION
 
     @property
@@ -144,6 +154,7 @@ def save_record(record: DraftRecord, path: Path, *, anonymize: bool = True) -> P
             }
             for keeper in record.keepers
         ],
+        "player_names": record.player_names,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=1))
@@ -214,6 +225,7 @@ def load_record(path: Path) -> DraftRecord:
         picks=tuple(sorted(picks)),
         keepers=keepers,
         snapshot_ref=payload.get("snapshot_ref"),
+        player_names=payload.get("player_names") or {},
         version=version,
     )
 
@@ -225,3 +237,49 @@ def _anonymized(record: DraftRecord) -> DraftRecord:
         for team in record.teams
     )
     return replace(record, league=league, teams=teams)
+
+
+def rekeyed(record: DraftRecord, players: list) -> tuple[DraftRecord, list[str]]:
+    """Re-point a record's players at a snapshot that minted different keys.
+
+    A player key is only meaningful beside the snapshot that issued it, so a record whose
+    snapshot has been deleted -- or that predates the only one still cached -- is a list of
+    ids nothing can resolve. ``player_names`` is the way back: names outlive a season, so
+    they can be crosswalked onto whatever snapshot is at hand.
+
+    What this cannot repair is the *valuation* mismatch underneath. Scoring a 2025 draft
+    against 2026 numbers measures how much players moved between the seasons at least as
+    much as it measures the engine, so this is for making an old record runnable, not for
+    treating the result as calibration. Callers say so out loud.
+
+    Anyone the snapshot has never heard of keeps his original key, which resolves to no
+    valuation: he holds his board position without removing a real player from the pool.
+    That is the honest failure -- the alternative, dropping the pick, renumbers everything
+    after it.
+    """
+    from ff_helper.rankings.players import PlayerRegistry, SourceRow
+
+    if not record.player_names:
+        return record, []
+
+    registry = PlayerRegistry(players)
+    mapping: dict[str, str] = {}
+    unmatched: list[str] = []
+    for key, name in record.player_names.items():
+        row = SourceRow(name=name, position="", team="", source="record")
+        found = registry.find(row) or registry.find_fuzzy(row)[0]
+        if found is None:
+            unmatched.append(name)
+        else:
+            mapping[key] = found.player_key
+
+    picks = tuple(
+        replace(pick, player_key=mapping.get(pick.player_key, pick.player_key))
+        for pick in record.picks
+    )
+    keepers = tuple(
+        replace(keeper, player_key=mapping.get(keeper.player_key, keeper.player_key))
+        for keeper in record.keepers
+    )
+    names = {mapping.get(k, k): v for k, v in record.player_names.items()}
+    return replace(record, picks=picks, keepers=keepers, player_names=names), unmatched

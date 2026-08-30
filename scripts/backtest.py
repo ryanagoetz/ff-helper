@@ -34,7 +34,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from ff_helper.assistant import Assistant  # noqa: E402
 from ff_helper.backtest import calibration, counterfactual, nominations  # noqa: E402
-from ff_helper.backtest.capture import DraftRecord, build_state, load_record  # noqa: E402
+from ff_helper.backtest.capture import (  # noqa: E402
+    DraftRecord,
+    build_state,
+    load_record,
+    rekeyed,
+)
 from ff_helper.rankings import cache  # noqa: E402
 from ff_helper.rankings.cache import Snapshot  # noqa: E402
 
@@ -247,6 +252,31 @@ def main() -> int:
             "or point --snapshot at one."
         )
         return 1
+
+    # A record older than the only cached snapshot carries keys that snapshot never
+    # minted; every player would resolve to nothing and the board would come back empty.
+    # Names bridge it -- loudly, because the valuations are then the wrong season's.
+    known = {player.player_key for player in snapshot.players}
+    if record.picks and not any(pick.player_key in known for pick in record.picks):
+        record, unmatched = rekeyed(record, snapshot.players)
+        if record.player_names:
+            matched = len(record.player_names) - len(unmatched)
+            print(
+                f"Record keys are not this snapshot's; matched {matched} of "
+                f"{len(record.player_names)} players by name against {snapshot.league_key}."
+            )
+            if unmatched:
+                print(f"  no match, holding their board position: {', '.join(unmatched)}")
+            # Compared against the snapshot actually loaded, not the record's own
+            # snapshot_ref -- the ref names the snapshot that is *missing*, so checking
+            # it silences the warning in exactly the case that needs it.
+            season = record.league.season
+            if season and season not in snapshot.league_key:
+                print(
+                    f"  WARNING: a {season} draft scored with {snapshot.league_key} "
+                    "valuations. Player values move between seasons, so read this as a "
+                    "sanity check on the replay, not as calibration."
+                )
 
     run(
         record,

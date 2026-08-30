@@ -70,6 +70,37 @@ def picks_for_slot(slot: int, num_teams: int, rounds: int, *, snake: bool = True
     return [pick_number(r, slot, num_teams, snake=snake) for r in range(1, rounds + 1)]
 
 
+def live_pick_schedule(
+    consumed: set[tuple[int, int]],
+    num_teams: int,
+    rounds: int,
+    *,
+    snake: bool = True,
+) -> list[tuple[int, int]]:
+    """``(slot, round)`` for each pick that will actually be made, in order.
+
+    Some keeper leagues charge a *pick* rather than a roster spot: the kept player is
+    slotted into the board at the round he cost, and the live draft flows around him.
+    That makes the dense snake wrong in a way no round count can repair. Two teams keeping
+    in round 1 means the third team on the board picks first, and the offsets never
+    resynchronise -- so my own turn, whose team is on the clock, and how many rival picks
+    separate two of my turns are all off by an amount that changes every round.
+
+    ``consumed`` is the set of ``(round, slot)`` board positions keepers hold. What comes
+    back is indexed by live pick number minus one, which is the numbering every other
+    writer here uses: the board counts selections, not board positions, because a
+    selection is the only thing anyone types in or that Yahoo reports.
+    """
+    schedule: list[tuple[int, int]] = []
+    for round_number in range(1, rounds + 1):
+        reverse = snake and round_number % 2 == 0
+        for offset in range(1, num_teams + 1):
+            slot = num_teams - offset + 1 if reverse else offset
+            if (round_number, slot) not in consumed:
+                schedule.append((slot, round_number))
+    return schedule
+
+
 @dataclass
 class DraftState:
     league: League
@@ -125,6 +156,13 @@ class DraftState:
     # than only in the response, because the response goes to the reader's badge on the
     # Yahoo tab and the person deciding what to bid is looking at ff-helper.
     unresolved: dict[str, tuple[str, int | None]] = field(default_factory=dict)
+
+    # (fingerprint, schedule) for pick_schedule. Keyed by _schedule_key rather than
+    # invalidated by writers -- see that method.
+    _schedule_cache: tuple[tuple, list[tuple[int, int]] | None] | None = field(
+        default=None, repr=False, compare=False
+    )
+    _schedule_reason: str = field(default="", repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.roster_size:
@@ -291,11 +329,13 @@ class DraftState:
         Kept players do not use a pick, so a 15-spot roster with 2 keepers drafts 13
         rounds. Where teams keep different numbers the most common count is used, since
         the snake pick maths needs one answer; ``keepers.from_yahoo`` warns when that
-        happens. Note this stays approximate for the whole draft: nothing derives pick
-        numbers back out of the feed, so a rival's countdown can be off even though
-        ``my_picks`` uses my own keeper count and ``total_picks`` is summed per team.
-        ``total_picks`` stays exact regardless, so an uneven league cannot end the draft
-        early.
+        happens. ``total_picks`` stays exact regardless, so an uneven league cannot end
+        the draft early.
+
+        ``rounds`` is the *fallback* answer, and it is only approximate. When every keeper
+        carries the round he cost, ``pick_schedule`` supersedes it with an exact
+        board-position-by-board-position answer and this collapsed count stops being
+        consulted for anything that matters -- see that property.
 
         Duplicates are dropped on the way in. One player cannot fill two roster spots or
         spend two salaries, so a list that names them twice -- a CSV listing a player under
@@ -318,6 +358,112 @@ class DraftState:
         counts = list(self.keeper_counts().values()) or [0]
         typical = Counter(counts).most_common(1)[0][0]
         self.rounds = max(1, self.roster_size - typical)
+
+    # -- the live-pick schedule ------------------------------------------------------
+
+    def _schedule_key(self) -> tuple:
+        """Fingerprint of everything ``pick_schedule`` is a function of.
+
+        Derived rather than maintained, for the reason ``board_key`` is: the inputs are
+        written from several places (``apply_keepers``, the ``roster_size`` setter, teams
+        arriving after construction), and a cache invalidated by hand needs every one of
+        those writers to remember. A fingerprint needs none of them to.
+
+        Frozensets rather than sorted tuples for order-independence. Not for speed --
+        measured, the two are within noise at this size (9 us either way on 27 keepers,
+        the cost being tuple construction rather than the sort) -- but because sorting
+        would compare the ``None`` that ``draft_position`` and ``round`` are both allowed
+        to be, and raise, on any key collision that got past the dedup upstream.
+        """
+        return (
+            self.roster_size,
+            self.num_teams,
+            self.snake,
+            frozenset((team.team_key, team.draft_position) for team in self.teams),
+            frozenset((k.player_key, k.team_key, k.round) for k in self.keepers),
+        )
+
+    @property
+    def pick_schedule(self) -> list[tuple[int, int]] | None:
+        """``(slot, round)`` per live pick, or None when the dense snake is already right.
+
+        None is the answer for the great majority of leagues, and it means "no correction
+        needed" rather than "gave up": with no keepers, or with keepers that cost a roster
+        spot instead of a pick, the dense snake *is* the schedule.
+
+        The correction is refused unless **every** keeper carries a round. A partial answer
+        is worse than none here, for the reason ``keepers.load_csv`` refuses to half-load:
+        a schedule built from six of nine keepers is wrong at every pick after the first
+        missing one, and wrong quietly, where the dense fallback is at least wrong in a
+        way already documented. ``pick_schedule_reason`` says which case fired.
+        """
+        key = self._schedule_key()
+        if self._schedule_cache is not None and self._schedule_cache[0] == key:
+            return self._schedule_cache[1]
+        schedule, reason = self._derive_schedule()
+        self._schedule_cache = (key, schedule)
+        self._schedule_reason = reason
+        return schedule
+
+    @property
+    def pick_schedule_reason(self) -> str:
+        """Why ``pick_schedule`` declined, for the UI. Empty when it did not."""
+        self.pick_schedule  # noqa: B018 -- populates the reason alongside the cache
+        return self._schedule_reason
+
+    def _derive_schedule(self) -> tuple[list[tuple[int, int]] | None, str]:
+        if not self.keepers:
+            return None, ""
+
+        missing = sum(1 for keeper in self.keepers if keeper.round is None)
+        if missing == len(self.keepers):
+            # Nobody costs a pick, so nothing is wrong and there is nothing to say. This
+            # is the ordinary keeper league -- kept players cost a roster spot, the draft
+            # is simply shorter, and the dense snake is exactly right.
+            return None, ""
+
+        slot_of = {team.team_key: team.draft_position for team in self.teams}
+        consumed: set[tuple[int, int]] = set()
+        for keeper in self.keepers:
+            if keeper.round is None:
+                # Mixed, which no real league is: some rows carry a round and some do not,
+                # so the file is incomplete rather than describing a spot-cost league.
+                return None, (
+                    f"{missing} of {len(self.keepers)} keepers have no round recorded. "
+                    "Pick numbers fall back to the approximate round count -- fill in the "
+                    "'round' column for every keeper, or none, so the two cannot disagree."
+                )
+            slot = slot_of.get(keeper.team_key)
+            if not slot:
+                return None, (
+                    "A keeper belongs to a team with no draft position, so the exact "
+                    "pick schedule cannot be built."
+                )
+            if not 1 <= keeper.round <= self.roster_size:
+                return None, (
+                    f"A keeper is recorded at round {keeper.round}, outside the "
+                    f"{self.roster_size} rounds of this draft."
+                )
+            if (keeper.round, slot) in consumed:
+                return None, (
+                    f"Two keepers both hold round {keeper.round} for draft slot {slot}; "
+                    "one board position cannot be spent twice."
+                )
+            consumed.add((keeper.round, slot))
+
+        return (
+            live_pick_schedule(consumed, self.num_teams, self.roster_size, snake=self.snake),
+            "",
+        )
+
+    def round_for_pick(self, pick: int) -> int | None:
+        """Which round a live pick number falls in."""
+        schedule = self.pick_schedule
+        if schedule is None:
+            if pick < 1:
+                return None
+            return (pick - 1) // max(self.num_teams, 1) + 1
+        return schedule[pick - 1][1] if 1 <= pick <= len(schedule) else None
 
     @property
     def picks_made(self) -> int:
@@ -360,10 +506,18 @@ class DraftState:
         says, and using the collapsed number would drop my last picks off the board
         entirely -- no next pick, no countdown, and a VONA horizon computed against a gap
         that does not exist.
+
+        Where keepers cost a pick, ``pick_schedule`` answers this exactly instead, and the
+        count it yields is the same ``roster_size - my keepers`` -- it is *which* picks
+        that differs, and by enough to matter: three keepers ahead of me in round 1 move
+        my first turn two picks earlier than the dense snake claims.
         """
         slot = self.my_slot
         if slot is None:
             return []
+        schedule = self.pick_schedule
+        if schedule is not None:
+            return [number for number, (owner, _) in enumerate(schedule, 1) if owner == slot]
         team = self.my_team
         rounds = self.rounds
         if team is not None:
@@ -399,6 +553,9 @@ class DraftState:
     def _slot_for_pick(self, pick: int) -> int | None:
         if pick < 1 or pick > self.total_picks:
             return None
+        schedule = self.pick_schedule
+        if schedule is not None:
+            return schedule[pick - 1][0] if pick <= len(schedule) else None
         num_teams = self.num_teams
         round_number = (pick - 1) // num_teams + 1
         offset = (pick - 1) % num_teams + 1

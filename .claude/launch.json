@@ -7,6 +7,13 @@
       "runtimeArgs": ["run", "ff-helper", "--offline", "data/league-bustamove.yaml", "--port", "8778"],
       "port": 8778,
       "autoPort": false
+    },
+    {
+      "name": "ff-helper-shiva",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "ff-helper", "--offline", "data/league-shiva.yaml", "--keepers", "data/keepers-shiva.csv", "--port", "8779"],
+      "port": 8779,
+      "autoPort": false
     }
   ]
 }

@@ -130,6 +130,56 @@ fingerprinted it; reading them separately let the two straddle a sale.
 
 **The board is the source of truth; the poller is just one of its writers.** `DraftState` accepts picks from the Yahoo poller, manual entry, and the draft-room bridge. Conflicts resolve toward Yahoo, but a superseded manual entry is reported, never silently overwritten.
 
+**A keeper costs either a roster spot or a pick, and the two need different maths.**
+`apply_keepers`' collapsed `rounds` is right for the first: kept players shorten the draft
+and the dense snake still describes it. For the second -- the kept player is slotted into
+the board at the round he cost, live picks flow around him -- no round count can help, and
+the error is not small. One keeper ahead of me in round 1 shifts every later pick by one
+and the offsets never resynchronise. Replaying the **actual 2025 Shiva draft**
+(`data/drafts/2025-shiva-snake.json`: 150 board positions, 26 keepers slotted at the rounds
+they cost, 124 live picks) the dense mapping named the right team for **11 of 124 picks**
+and knew it was my turn at **1 of my 14** -- that league is the bad case for it, since my
+team kept one player where most kept three, so I drafted 14 times against their 12 and the
+dense model put my last turn past the end of the draft. `DraftState.pick_schedule` builds
+the exact `(slot, round)` sequence when every keeper carries a round, and `my_picks` /
+`_slot_for_pick` / `round_for_pick` read it: **122/124** and 14/14.
+
+The two it still misses are the honest ceiling, not a bug. Yahoo's record shows two teams
+**swapped** their round-3 and round-15 picks, so the 2025 board is not a snake at all and
+no formula over `(round, slot)` can express it. Traded picks would need the real pick order
+as *data* rather than a derivation. Worth knowing before trusting `team_for_pick` in a
+league that trades picks -- and worth knowing that the posted board, not the snake, is the
+authority when the two disagree.
+
+Three things about that property are deliberate. It returns **None for the ordinary
+league** -- no keepers, or keepers with no rounds -- because there the dense snake *is* the
+schedule, and a note nagging every Yahoo keeper league to add a column would be noise; only
+a *partly* filled column is loud, since that file is inconsistent rather than describing a
+spot-cost league. It refuses **all-or-nothing**, for `keepers.load_csv`'s reason: a
+schedule built from six of nine keepers is wrong at every pick after the first missing one
+and wrong quietly, where the dense fallback is at least wrong in a documented way. And it
+is **keyed by a fingerprint, not invalidated by writers** -- the `board_key` lesson, since
+`roster_size`, `teams` and `apply_keepers` all feed it from different places.
+
+The gate this passed was *not* Brier, and the attempt is worth recording so nobody repeats
+it. Replayed on the real 2025 board the delta was **+0.00008** -- very slightly *worse* --
+over 5972 predictions, with the counterfactual lineup **identical to the tenth of a point**;
+on a generated draft over the 2026 board it was -0.00001 (sd 0.00012, better on 4 of 8
+seeds) with the lineup -6.3 against a per-seed spread of ±135. All of that is noise, and it
+is noise *structurally*, for two compounding reasons. `survival_calibration` takes its scoring
+windows from the record's own picks, so both arms are handed the correct turn boundaries
+for free and the harness cannot see the defect at all. And no snapshot older than 2026
+survives, so a 2025 replay prices a 2025 draft with 2026 valuations -- 2025's last-round
+keepers Nacua, Achane and Smith-Njigba are 2026 first-rounders -- which makes the absolute
+Brier (0.017) a measure of cross-season value drift more than of calibration.
+
+What it passed instead is the `budget_price` gate -- byte-identity of the existing auction
+backtest -- plus ground truth on pick ownership, which is what
+`tests/test_keepers.py::TestKeepersThatCostAPick` pins, including a test asserting the
+dense fallback really is wrong so the premise cannot rot. **A correctness fix to a mapping
+is not a model constant, and Brier is the wrong instrument for it**; do not read the
+neutral number above as evidence for or against.
+
 **Failures are asymmetric, and the code takes sides.** An unresolvable *buyer* in an auction is refused outright (money charged to nobody inflates every remaining price); an unresolvable *player* only degrades toward stale. An unmatched keeper name is a hard error, not a skipped row. A name-match miss drops a player from every recommendation with no error, so `rankings/players.py` matches in explicit layers and everything unmatched is reported.
 
 **Concurrency.** `sync.py` runs on its own thread and writes `DraftState` under `Assistant.lock`. Read the board under the lock, copy what you need, then run the pure engine functions outside it — `snake_recommendations` is the pattern to follow.

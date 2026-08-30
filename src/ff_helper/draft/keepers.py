@@ -184,6 +184,16 @@ def load_csv(
         if count > 1:
             problems.append(f"{player_key} is listed {count} times")
 
+    # Where keepers cost a pick, one team cannot spend the same round twice -- that is one
+    # board position, and DraftState.pick_schedule would have to choose which keeper holds
+    # it. Caught here rather than there so the message can name the file and the round.
+    for (team_key, round_cost), count in Counter(
+        (keeper.team_key, keeper.round) for keeper in kept if keeper.round is not None
+    ).items():
+        if count > 1:
+            name = next((t.name for t in teams if t.team_key == team_key), team_key)
+            problems.append(f"{name} has {count} keepers both costing round {round_cost}")
+
     # A file that resolves to nothing is the total-loss case, and it is worse than the
     # half-load below: with no error, resolve() would hand back an empty keeper set that
     # still overrides a perfectly good Yahoo roster read.

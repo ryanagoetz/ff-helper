@@ -128,10 +128,21 @@ class Assistant:
         state.apply_keepers(state.keepers)
 
         if state.keepers:
-            notes.append(
-                f"{len(state.keepers)} keepers held out of the pool; "
-                f"drafting {state.rounds} rounds of a {state.roster_size}-man roster"
-            )
+            if state.pick_schedule is not None:
+                # Keepers cost a pick here, so "rounds" is not one number: I draft in every
+                # round I did not keep in, and the count below is mine specifically.
+                notes.append(
+                    f"{len(state.keepers)} keepers held out of the pool, each costing the "
+                    f"draft pick he was slotted at; you pick {len(state.my_picks)} times "
+                    f"in a {state.roster_size}-man roster"
+                )
+            else:
+                notes.append(
+                    f"{len(state.keepers)} keepers held out of the pool; "
+                    f"drafting {state.rounds} rounds of a {state.roster_size}-man roster"
+                )
+                if state.pick_schedule_reason:
+                    notes.append(state.pick_schedule_reason)
 
             unvalued = [k for k in state.keepers if k.player_key not in valuations.valuations]
             if unvalued:
@@ -747,7 +758,7 @@ class Assistant:
                 "auction": auction,
                 "current_pick": state.current_pick,
                 "total_picks": state.total_picks,
-                "round": (state.current_pick - 1) // max(state.num_teams, 1) + 1,
+                "round": state.round_for_pick(state.current_pick),
                 "is_my_turn": state.is_my_turn,
                 "picks_until_my_turn": state.picks_until_my_turn,
                 "my_slot": state.my_slot,

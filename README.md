@@ -346,8 +346,20 @@ Kenneth Walker III,Rival Squad,,4
 `team` matches a Yahoo team name or key. `cost` matters for auctions; both it and `round`
 are optional. Column names are flexible (`name`/`owner`/`salary` all work).
 
-`round` is recorded but does not yet feed the pick maths — forfeited picks are not
-modelled, so a keeper-snake league that charges a round still gets uniform pick numbers.
+**Supply `round` if a keeper costs a draft pick rather than a roster spot.** Some leagues
+slot the kept player into the board at the round he cost and let the live draft flow around
+him. That makes the uniform snake wrong almost everywhere: one keeper ahead of you in round
+1 shifts every later pick by one, and the offsets never resynchronise. Given the column,
+the app builds the exact board — who owns each pick, which round it falls in, and when your
+turns actually are. Replayed on a real completed draft (10 teams, 26 slotted keepers, 124
+live picks), the uniform model named the right team for **11 of 124 picks** and knew it was
+your turn at **1 of your 14**; with rounds supplied, **122 of 124** and all 14. The two it
+misses are a pair of *traded* picks — see Limitations.
+
+Fill it in for **every** keeper or none. A partly-filled column is refused whole — a
+schedule built from some of the keepers is wrong at every pick after the first missing one,
+and wrong silently. Leaving it blank everywhere is the normal case and says "keepers cost a
+roster spot here", which is what most leagues do.
 
 **In an auction, supply `cost`.** Yahoo often publishes no keeper salary, and a salary the
 app does not know is spent as $0 — which leaves that money apparently in the room and
@@ -523,6 +535,13 @@ name — and anything unmatched is reported rather than swallowed.
   turns are computed from your own keeper count, so they stay exact; what can drift is the
   countdown to a rival's pick. The app says so when it detects this. This stays approximate
   for the whole draft — nothing reconstructs the real pick order from the live feed.
+  **Unless keepers cost a round**: give the keeper CSV a `round` column and the whole
+  schedule becomes exact instead, rivals included (see Keepers above).
+- **Traded draft picks aren't modelled.** Pick ownership is derived from the snake order,
+  so two teams swapping picks is invisible — the app will name the wrong team for both.
+  This is real, not hypothetical: the 2025 record in `data/drafts/` contains exactly one
+  such swap. Nothing goes wrong with your *own* board (who's available, what they're
+  worth); what's wrong is whose turn the app thinks it is at those picks.
 - **Auction budgets** default to $200 when Yahoo doesn't publish one — override with
   `FF_AUCTION_BUDGET` if your league differs.
 - **Auction nominations** aren't tracked. Yahoo's API reports completed sales, not who is

@@ -83,3 +83,36 @@ accepts the export's own point total for those two positions only. It is off by 
 because accepting a point total means accepting the exporter's scoring, and it prints a
 warning naming every player it applied to. Whether that trade is worth making is a
 question to settle by running a week both ways, not by argument.
+
+## drafts/
+
+Completed drafts, anonymized and committable — the input to `scripts/backtest.py`.
+
+`2025-shiva-snake.json` is worth describing, because it is the one record here that is not
+a plain snake and it was wrong on disk until 2026-08-30.
+
+**Yahoo reports kept players as picks.** `draftresults` returned 150 selections for a
+draft in which only 124 selections were made; the other 26 were keepers slotted into the
+board at the round they cost. Replayed as recorded, the board invented 26 picks nobody
+made and handed every kept player back to the pool. The record now carries the 26 as
+`keepers` with their rounds and the 124 as `picks`, which is what `DraftState` means by a
+pick — a selection, not a board position.
+
+**Two picks were traded.** Two teams swapped their round-3 and round-15 picks, so no snake
+formula reproduces this board: `pick_schedule` places 122 of 124. That is the ceiling, not
+a bug, and it is why the record stores each pick's real owner rather than deriving it.
+
+**It carries `player_names`.** The 2025 ranking snapshot is gone, and a player key means
+nothing without the snapshot that minted it, so the record was unreplayable — 150 opaque
+ids. Names survive a season, so `capture.rekeyed` crosswalks them onto whatever snapshot
+is cached and `scripts/backtest.py` does this automatically, printing what it matched:
+
+```bash
+uv run python scripts/backtest.py --file data/drafts/2025-shiva-snake.json \
+  --snapshot ~/.ff-helper/cache/snapshot-offline.l.667109.json
+```
+
+It also prints a warning, and the warning is the point: **a 2025 draft scored with 2026
+valuations measures how much players moved between seasons at least as much as it measures
+the engine.** 2025's last-round keepers — Nacua, Achane, Smith-Njigba — are 2026
+first-rounders. Treat the output as a check that the replay runs, not as calibration.
