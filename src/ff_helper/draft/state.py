@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field, replace
+from typing import NamedTuple
 
 from ff_helper.yahoo.models import DraftPick, KeptPlayer, League, Team
 
@@ -70,14 +71,29 @@ def picks_for_slot(slot: int, num_teams: int, rounds: int, *, snake: bool = True
     return [pick_number(r, slot, num_teams, snake=snake) for r in range(1, rounds + 1)]
 
 
+class LivePick(NamedTuple):
+    """One selection that will actually be made.
+
+    ``board_pick`` is the number the *posted board* gives it -- keepers included, because
+    they occupy a square on it. The two numberings differ by however many keepers came
+    before, and both are needed: the board number is what everyone in the room is looking
+    at and saying out loud, while the live number is what this app counts, since a keeper
+    is not something anyone types in.
+    """
+
+    slot: int
+    round: int
+    board_pick: int
+
+
 def live_pick_schedule(
     consumed: set[tuple[int, int]],
     num_teams: int,
     rounds: int,
     *,
     snake: bool = True,
-) -> list[tuple[int, int]]:
-    """``(slot, round)`` for each pick that will actually be made, in order.
+) -> list[LivePick]:
+    """Every pick that will actually be made, in order.
 
     Some keeper leagues charge a *pick* rather than a roster spot: the kept player is
     slotted into the board at the round he cost, and the live draft flows around him.
@@ -91,13 +107,14 @@ def live_pick_schedule(
     writer here uses: the board counts selections, not board positions, because a
     selection is the only thing anyone types in or that Yahoo reports.
     """
-    schedule: list[tuple[int, int]] = []
+    schedule: list[LivePick] = []
     for round_number in range(1, rounds + 1):
         reverse = snake and round_number % 2 == 0
         for offset in range(1, num_teams + 1):
             slot = num_teams - offset + 1 if reverse else offset
+            board_pick = (round_number - 1) * num_teams + offset
             if (round_number, slot) not in consumed:
-                schedule.append((slot, round_number))
+                schedule.append(LivePick(slot, round_number, board_pick))
     return schedule
 
 
@@ -159,7 +176,7 @@ class DraftState:
 
     # (fingerprint, schedule) for pick_schedule. Keyed by _schedule_key rather than
     # invalidated by writers -- see that method.
-    _schedule_cache: tuple[tuple, list[tuple[int, int]] | None] | None = field(
+    _schedule_cache: tuple[tuple, list[LivePick] | None] | None = field(
         default=None, repr=False, compare=False
     )
     _schedule_reason: str = field(default="", repr=False, compare=False)
@@ -384,8 +401,8 @@ class DraftState:
         )
 
     @property
-    def pick_schedule(self) -> list[tuple[int, int]] | None:
-        """``(slot, round)`` per live pick, or None when the dense snake is already right.
+    def pick_schedule(self) -> list[LivePick] | None:
+        """One entry per live pick, or None when the dense snake is already right.
 
         None is the answer for the great majority of leagues, and it means "no correction
         needed" rather than "gave up": with no keepers, or with keepers that cost a roster
@@ -411,7 +428,7 @@ class DraftState:
         self.pick_schedule  # noqa: B018 -- populates the reason alongside the cache
         return self._schedule_reason
 
-    def _derive_schedule(self) -> tuple[list[tuple[int, int]] | None, str]:
+    def _derive_schedule(self) -> tuple[list[LivePick] | None, str]:
         if not self.keepers:
             return None, ""
 
@@ -456,6 +473,35 @@ class DraftState:
             "",
         )
 
+    def board_pick_for(self, pick: int) -> int | None:
+        """The number the posted board gives a live pick -- keepers counted.
+
+        The two numberings only differ where keepers cost a pick, and there they differ by
+        a running total rather than a constant: at the first live pick of the 2026 Shiva
+        draft the board already reads 2, because Gibbs holds 1.01. Everyone in the room is
+        calling picks by the board number, so it is what the header shows; everything
+        internal stays on the live number, which is the one that counts what gets typed in.
+        """
+        schedule = self.pick_schedule
+        if schedule is None:
+            return pick if 1 <= pick <= self.total_picks else None
+        return schedule[pick - 1].board_pick if 1 <= pick <= len(schedule) else None
+
+    @property
+    def board_total(self) -> int:
+        """Squares on the posted board, keepers included."""
+        if self.pick_schedule is None:
+            return self.total_picks
+        return self.roster_size * self.num_teams
+
+    def board_label(self, pick: int) -> str | None:
+        """``round.pick-in-round`` for a live pick, the way a draft board writes it."""
+        board_pick = self.board_pick_for(pick)
+        if board_pick is None:
+            return None
+        num_teams = max(self.num_teams, 1)
+        return f"{(board_pick - 1) // num_teams + 1}.{(board_pick - 1) % num_teams + 1:02d}"
+
     def round_for_pick(self, pick: int) -> int | None:
         """Which round a live pick number falls in."""
         schedule = self.pick_schedule
@@ -463,7 +509,7 @@ class DraftState:
             if pick < 1:
                 return None
             return (pick - 1) // max(self.num_teams, 1) + 1
-        return schedule[pick - 1][1] if 1 <= pick <= len(schedule) else None
+        return schedule[pick - 1].round if 1 <= pick <= len(schedule) else None
 
     @property
     def picks_made(self) -> int:
@@ -517,7 +563,7 @@ class DraftState:
             return []
         schedule = self.pick_schedule
         if schedule is not None:
-            return [number for number, (owner, _) in enumerate(schedule, 1) if owner == slot]
+            return [n for n, live in enumerate(schedule, 1) if live.slot == slot]
         team = self.my_team
         rounds = self.rounds
         if team is not None:
@@ -555,7 +601,7 @@ class DraftState:
             return None
         schedule = self.pick_schedule
         if schedule is not None:
-            return schedule[pick - 1][0] if pick <= len(schedule) else None
+            return schedule[pick - 1].slot if pick <= len(schedule) else None
         num_teams = self.num_teams
         round_number = (pick - 1) // num_teams + 1
         offset = (pick - 1) % num_teams + 1

@@ -759,10 +759,21 @@ class Assistant:
                 "current_pick": state.current_pick,
                 "total_picks": state.total_picks,
                 "round": state.round_for_pick(state.current_pick),
+                # What the posted board calls this pick. Equal to current_pick in every
+                # league where keepers do not cost a pick, so the page can show it
+                # unconditionally.
+                "board_pick": state.board_pick_for(state.current_pick),
+                "board_total": state.board_total,
+                "board_label": state.board_label(state.current_pick),
                 "is_my_turn": state.is_my_turn,
                 "picks_until_my_turn": state.picks_until_my_turn,
                 "my_slot": state.my_slot,
                 "next_pick": state.next_pick_after(state.current_pick),
+                "next_pick_label": (
+                    state.board_label(nxt)
+                    if (nxt := state.next_pick_after(state.current_pick)) is not None
+                    else None
+                ),
                 "on_the_clock": (
                     state.team_on_the_clock().name if state.team_on_the_clock() else None
                 ),

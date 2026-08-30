@@ -827,8 +827,40 @@ class TestKeepersThatCostAPick:
         state = self._state()
         schedule = state.pick_schedule
         for team in state.teams:
-            drafted = sum(1 for slot, _ in schedule if slot == team.draft_position)
+            drafted = sum(1 for live in schedule if live.slot == team.draft_position)
             assert drafted == 15 - len(state.keepers_for(team.team_key))
+
+    def test_board_numbering_counts_the_keepers(self):
+        """What the room calls a pick, versus what this app counts.
+
+        Slot 1 keeps at 1.01, so the first thing anyone actually picks is board 2 -- and
+        the gap widens with every keeper passed, which is why it is a lookup rather than
+        an offset.
+        """
+        state = self._state()
+        assert state.board_pick_for(1) == 2
+        assert state.board_label(1) == "1.02"
+        assert state.board_total == 15 * NUM_TEAMS
+        # Three keepers sit at or before round 3, so by the second round the two
+        # numberings have drifted by more than the one pick they started at.
+        drift = [state.board_pick_for(n) - n for n in range(1, state.total_picks + 1)]
+        assert drift[0] == 1
+        assert drift[-1] == len(self.KEPT)
+        assert drift == sorted(drift), "board numbering must never run backwards"
+
+    def test_board_numbering_is_identity_without_a_schedule(self):
+        """Every ordinary league: the board number *is* the pick number."""
+        state = self._state(self._keepers(rounds=False))
+        assert state.pick_schedule is None
+        assert [state.board_pick_for(n) for n in (1, 5, 20)] == [1, 5, 20]
+        assert state.board_total == state.total_picks
+
+    def test_my_turns_in_board_numbering(self):
+        state = self._state()
+        labels = [state.board_label(p) for p in state.my_picks]
+        # I keep in round 2, so no board label of mine is in it.
+        assert not any(label.startswith("2.") for label in labels)
+        assert len(labels) == len(state.my_picks) == 14
 
     def test_no_turn_falls_outside_the_draft(self):
         """The dense model put my last turn past the final pick, so I lost it."""

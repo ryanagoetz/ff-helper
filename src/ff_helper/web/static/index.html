@@ -115,7 +115,7 @@
      entry. Typing the name twice -- once to see the value, once to record it -- was the
      single most repeated action of a draft, ~180 times, under a clock. -->
 <div class="panel" id="nominationPanel" style="margin-bottom:14px; border-color:var(--accent-dim)">
-  <div class="label" style="margin-bottom:8px">Nominated player</div>
+  <div class="label" style="margin-bottom:8px" id="entryLabel">Nominated player</div>
   <input type="search" id="nomBox" placeholder="Type a few letters…" autocomplete="off">
   <div class="results" id="nomMatches"></div>
   <div id="nomResult" style="margin-top:10px"></div>
@@ -241,10 +241,22 @@ function renderState(s) {
     $("clock").innerHTML = `${s.current_pick - 1} <small>of ${s.total_picks} players sold</small>`;
     $("slotText").textContent = "Auction draft";
   } else {
-    $("clock").innerHTML = `Pick ${s.current_pick} <small>of ${s.total_picks} &middot; round ${s.round}</small>`;
+    // Board numbering, not the app's own count. Where keepers cost a pick the two differ
+    // -- the first Shiva selection is board pick 2, because a keeper holds 1.01 -- and the
+    // board number is the one being called out in the room. The live count still shows,
+    // as "N to enter", because that is what is left to type.
+    const label = s.board_label ? `Pick ${s.board_label}` : `Pick ${s.current_pick}`;
+    const entered = s.current_pick - 1;
+    const sub = s.board_pick && s.board_pick !== s.current_pick
+      ? `board pick ${s.board_pick} of ${s.board_total} &middot; ${entered} of ${s.total_picks} entered`
+      : `of ${s.total_picks} &middot; round ${s.round}`;
+    $("clock").innerHTML = `${label} <small>${sub}</small>`;
     $("slotText").textContent = s.my_slot ? `Your slot: ${s.my_slot}` : "Draft order not published yet";
   }
   $("leagueName").textContent = s.league;
+  // In an auction you look a player up because someone put him up for bid; in a snake you
+  // look him up because someone took him. Same box, and the noun should match the room.
+  $("entryLabel").textContent = isAuction ? "Nominated player" : "Drafted player";
   renderAuctionBar(s);
 
   // Sync health. The whole point of showing this is so you know when to stop trusting
@@ -258,22 +270,36 @@ function renderState(s) {
   else                        { dot.className = "dot ok";    txt.textContent = `synced ${Math.round(s.staleness)}s ago`; }
 
   const banner = $("turnBanner");
-  if (s.draft_status === "predraft") {
-    banner.className = "turn"; banner.textContent = "Draft has not started yet.";
-  } else if (isAuction) {
-    // No turn to wait for: every player is biddable at all times.
-    const a = s.auction || {};
-    banner.className = a.max_bid > 0 ? "turn mine" : "turn";
-    banner.textContent = a.slots_remaining > 0
-      ? `Bid up to $${a.max_bid} — $${a.remaining} left for ${a.slots_remaining} more spots.`
-      : "Your roster is full.";
+  const at = s.board_label ? `pick ${s.board_label}` : `pick ${s.current_pick}`;
+  const nextAt = fmt(s.next_pick_label || s.next_pick);
+  if (isAuction) {
+    if (s.draft_status === "predraft") {
+      banner.className = "turn"; banner.textContent = "Draft has not started yet.";
+    } else {
+      // No turn to wait for: every player is biddable at all times.
+      const a = s.auction || {};
+      banner.className = a.max_bid > 0 ? "turn mine" : "turn";
+      banner.textContent = a.slots_remaining > 0
+        ? `Bid up to $${a.max_bid} — $${a.remaining} left for ${a.slots_remaining} more spots.`
+        : "Your roster is full.";
+    }
   } else if (s.is_my_turn) {
     banner.className = "turn mine";
-    banner.textContent = `You are on the clock — pick ${s.current_pick}. Next pick after this: ${fmt(s.next_pick)}`;
+    banner.textContent = `You are on the clock — ${at}. Next pick after this: ${nextAt}`;
+  } else if (s.on_the_clock) {
+    // Deliberately not gated on draft_status. An offline draft has no feed to move that
+    // field off "predraft", so gating hid whose turn it was for the entire draft -- in
+    // the one mode where the app cannot work it out for you.
+    banner.className = "turn";
+    const yet = s.draft_status === "predraft" && s.current_pick === 1 ? "Not started yet — " : "";
+    banner.textContent = `${yet}${s.on_the_clock} is on the clock at ${at}.`
+      + ` ${s.picks_until_my_turn ?? "—"} picks until your turn${
+        s.next_pick_label ? " at " + s.next_pick_label : ""}.`;
   } else {
     banner.className = "turn";
-    const who = s.on_the_clock ? `${s.on_the_clock} is picking` : "Waiting on the next pick";
-    banner.textContent = `${who}. ${s.picks_until_my_turn ?? "—"} picks until your turn.`;
+    banner.textContent = s.draft_status === "predraft"
+      ? "Draft has not started yet."
+      : "Waiting on the next pick.";
   }
 
   const alerts = [];
