@@ -88,6 +88,12 @@
   .results div { padding: 7px 9px; border-radius: 7px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
   .results div:hover { background: var(--panel-2); }
   .alert { background: rgba(251,191,36,.12); border: 1px solid var(--warn); color: var(--text); padding: 9px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 10px; }
+  /* Confidence on the recommendation itself. Deliberately quieter than .alert -- a thin
+     board is the normal state of round 10, not something going wrong. */
+  .strength { margin-top: 12px; padding: 9px 12px; border-radius: 8px; font-size: 13px;
+              border: 1px solid var(--line); background: var(--panel-2); color: var(--dim); }
+  .strength b { color: var(--text); font-weight: 600; }
+  .strength.thin, .strength.exhausted { border-color: var(--warn); background: rgba(251,191,36,.10); }
   .muted { color: var(--dim); font-size: 13px; }
 </style>
 </head>
@@ -144,6 +150,9 @@
       <div class="meta" id="topMeta"></div>
       <div class="reason" id="topReason"></div>
       <div class="stats" id="topStats"></div>
+      <!-- Says when the ranking above is not claiming much. A round-12 pick renders
+           identically to a round-1 one, and they are not the same claim. -->
+      <div id="topStrength" style="display:none"></div>
     </div>
 
     <div class="panel">
@@ -413,6 +422,19 @@ function renderRecommendations(data) {
 
   document.querySelector(".top .label").textContent =
     auction ? "Best value on the board" : "Recommended pick";
+
+  // Snake only, and silent when the engine has a real opinion -- a banner on every pick
+  // would be read as decoration and stop being read at all.
+  const strength = data.strength;
+  const strengthEl = $("topStrength");
+  if (!strength || strength.level === "clear") {
+    strengthEl.style.display = "none";
+  } else {
+    const heading = { close: "Close call", thin: "Thin board", exhausted: "Board exhausted" };
+    strengthEl.className = `strength ${strength.level}`;
+    strengthEl.innerHTML = `<b>${heading[strength.level]}.</b> ${strength.note}`;
+    strengthEl.style.display = "";
+  }
 
   $("topStats").innerHTML = auction ? `
     <div class="stat"><b>$${top.bid_to}</b><span>Bid up to</span></div>

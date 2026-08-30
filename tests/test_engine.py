@@ -12,6 +12,8 @@ from ff_helper.engine.room import (
 )
 from ff_helper.engine.scoring import score_stats, scoring_slug
 from ff_helper.engine.vona import (
+    Recommendation,
+    advice_strength,
     depth_multiplier,
     expected_best_available,
     extrapolated_picks,
@@ -761,3 +763,60 @@ class TestValuationEffects:
         streamed = replacement.compute(pool, one_qb, num_teams=12)
         assert deep.points["QB"] == pytest.approx(300 - 24 * 8)  # 25th QB, no floor
         assert streamed.points["QB"] == pytest.approx(300 - 11 * 8)  # the streamable 12th
+
+
+class TestAdviceStrength:
+    """When the ranking stops claiming anything, it should say so.
+
+    The failure this guards is one of tone, not arithmetic: a round-12 recommendation
+    renders identically to a round-1 one, so the page implies an opinion the engine does
+    not have. Measured on the real 2026 Shiva board, top VOR reaches exactly 0.0 by round
+    9 and the top-three spread falls under a point a week from round 4.
+    """
+
+    def _rec(self, vor: float, score: float) -> Recommendation:
+        return Recommendation(
+            valuation=PlayerValuation(
+                player_key="p", name="P", position="RB", team="X",
+                projected_points=100.0, adp=50.0, adp_stdev=10.0,
+            ),
+            vor=vor, vona=0.0, score=score, survival_to_next=0.5,
+            depth_factor=1.0, reason="",
+        )
+
+    def _list(self, pairs):
+        return [self._rec(vor, score) for vor, score in pairs]
+
+    def test_a_clear_board_says_nothing(self):
+        """Silence is the point: a banner on every pick stops being read."""
+        strength = advice_strength(self._list([(68.0, 200.0), (60.0, 180.0), (55.0, 165.0)]))
+        assert strength.level == "clear"
+        assert strength.note == ""
+        assert strength.is_confident
+
+    def test_a_bunched_top_is_a_close_call(self):
+        strength = advice_strength(self._list([(68.0, 200.0), (66.0, 197.0), (64.0, 195.0)]))
+        assert strength.level == "close"
+        assert "point a week" in strength.note
+
+    def test_a_marginal_best_player_is_a_thin_board(self):
+        strength = advice_strength(self._list([(8.0, 40.0), (4.0, 10.0), (2.0, 5.0)]))
+        assert strength.level == "thin"
+
+    def test_replacement_level_is_exhausted_not_merely_thin(self):
+        """vor <= 0 means "no better than a free agent" by construction, not by tuning."""
+        strength = advice_strength(self._list([(0.0, 12.0), (0.0, 3.0), (0.0, 0.0)]))
+        assert strength.level == "exhausted"
+        assert "above replacement" in strength.note
+
+    def test_exhausted_outranks_close(self):
+        """A worthless board is also a bunched one, and only one fact changes the pick."""
+        strength = advice_strength(self._list([(0.0, 5.0), (0.0, 5.0), (0.0, 5.0)]))
+        assert strength.level == "exhausted"
+
+    def test_an_empty_board_does_not_divide_by_the_third_entry(self):
+        assert advice_strength([]).level == "exhausted"
+        assert advice_strength(self._list([(50.0, 100.0)])).gap == 0.0
+
+    def test_negative_vor_is_exhausted(self):
+        assert advice_strength(self._list([(-3.0, 1.0)])).level == "exhausted"

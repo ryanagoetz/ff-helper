@@ -64,6 +64,15 @@ _MAX_PLAN_PICKS = 8
 # recomputation keeps the plan cache small.
 _EXCLUSION_DEPTH = 3
 
+# The unit the advice-strength thresholds are written in. A season projection covers a
+# 17-game season, so a VOR of 17 is one point a week -- and one point a week is comfortably
+# inside the estimation error under these projections. That is the argument, and it is the
+# same one ``WINPROB_EDGE`` makes in ``winprob.py``: below this the model is discriminating
+# between players it cannot actually tell apart, and saying so is more honest than printing
+# a ranking that looks equally confident in every round.
+_GAMES = 17
+_MARGINAL_VOR = float(_GAMES)
+
 # Bounds on the pick-budget normalizer exponent. Survival probabilities are raised to
 # this power so that the *expected number of players removed* between now and a target
 # pick equals the number of picks that actually happen in between -- treating survivals
@@ -328,6 +337,65 @@ class Recommendation:
     @property
     def position(self) -> str:
         return self.valuation.position
+
+
+@dataclass(frozen=True)
+class AdviceStrength:
+    """How much the top recommendation is actually claiming.
+
+    A round-12 recommendation is rendered with exactly the same confidence as a round-1
+    one, and they are not the same claim: by the time the best player left is level with a
+    free agent, the ranking is ordering noise. This says which regime the board is in, so
+    the page can stop implying an opinion the engine does not have.
+
+    Both thresholds are definitional rather than tuned. ``exhausted`` is ``vor <= 0``,
+    which *means* "no better than replacement" by construction. The other two are one
+    point a week (``_MARGINAL_VOR``) -- see that constant.
+    """
+
+    level: str  # "clear" | "close" | "thin" | "exhausted"
+    top_vor: float
+    gap: float  # score between the best recommendation and the third-best
+    note: str
+
+    @property
+    def is_confident(self) -> bool:
+        return self.level == "clear"
+
+
+def advice_strength(recommendations: list[Recommendation]) -> AdviceStrength:
+    """Classify a recommendation list by how much separation it actually found.
+
+    Order matters: "nothing is left" outranks "the top few are close", because when every
+    candidate is replacement level they are close *and* worthless, and only the second
+    fact changes what you do.
+    """
+    if not recommendations:
+        return AdviceStrength("exhausted", 0.0, 0.0, "No players left to recommend.")
+
+    top = recommendations[0]
+    third = recommendations[min(2, len(recommendations) - 1)]
+    gap = top.score - third.score
+
+    if top.vor <= 0.0:
+        note = (
+            "Nothing left projects above replacement. Take the kicker or defense you "
+            "still owe, or a bench dart on upside -- this pick is not deciding anything."
+        )
+        return AdviceStrength("exhausted", top.vor, gap, note)
+    if top.vor < _MARGINAL_VOR:
+        note = (
+            f"The best player left is worth {top.vor / _GAMES:.1f} points a week over a "
+            "free agent. Roster need and upside matter more than this ranking does."
+        )
+        return AdviceStrength("thin", top.vor, gap, note)
+    if gap < _MARGINAL_VOR:
+        note = (
+            "The top few are within a point a week of each other -- closer than these "
+            "projections can resolve. Break the tie on need, bye weeks, or upside."
+        )
+        return AdviceStrength("close", top.vor, gap, note)
+    return AdviceStrength("clear", top.vor, gap, "")
 
 
 def recommend(

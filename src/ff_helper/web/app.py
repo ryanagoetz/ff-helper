@@ -29,6 +29,7 @@ from ff_helper.config import bridge_token as config_bridge_token
 from ff_helper.draft import bridge, keepers
 from ff_helper.draft.state import BridgeSale, DraftState
 from ff_helper.draft.sync import DraftSync
+from ff_helper.engine import vona
 from ff_helper.rankings import cache
 from ff_helper.rankings.players import PlayerRegistry
 from ff_helper.yahoo.client import YahooClient
@@ -251,6 +252,17 @@ def create_app(
         if assistant.is_auction:
             payload["inflation"] = round(assistant.current_inflation(), 3)
             payload["max_bid"] = assistant.state.my_max_bid()
+        else:
+            # How much the ranking is actually claiming. Snake only: the auction panel
+            # already states its confidence in dollars, where a $1 bid says the same
+            # thing this does.
+            strength = vona.advice_strength(picks)
+            payload["strength"] = {
+                "level": strength.level,
+                "note": strength.note,
+                "top_vor": round(strength.top_vor, 1),
+                "gap": round(strength.gap, 1),
+            }
         return payload
 
     @app.get("/api/nominate")
